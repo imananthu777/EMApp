@@ -229,11 +229,12 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
   };
 
-  const handleEditTransaction = (transaction: Transaction) => {
-    setSelectedTransaction(transaction);
-    setNewTransaction(transaction);
-    setTransactionDialogOpen(true);
-  };
+  // Commented out unused function
+  // const handleEditTransaction = (transaction: Transaction) => {
+  //   setSelectedTransaction(transaction);
+  //   setNewTransaction(transaction);
+  //   setTransactionDialogOpen(true);
+  // };
 
   const handleUpdateBudget = (values: { total: number, categories: { [key: string]: number } }) => {
     const newBudget: MonthlyBudget = {
@@ -333,9 +334,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setCategoryDialogOpen(true);
   };
 
-  const getFilteredCategories = (type: 'expense' | 'income') => {
-    return categories.filter(cat => cat.type === type);
-  };
+  // Commented out unused function
+  // const getFilteredCategories = (type: 'expense' | 'income') => {
+  //   return categories.filter(cat => cat.type === type);
+  // };
 
   const handleDownloadExcel = () => {
     const [startYear] = currentFY.split('-');

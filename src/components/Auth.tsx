@@ -63,7 +63,8 @@ export default function Auth({ onLogin }: AuthProps) {
 
   const formatTimer = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
-  const handleSendOtp = async (targetPhone: string) => {
+  // Removed unused targetPhone parameter
+  const handleSendOtp = async () => {
     setLoading(true);
     setMessage('');
     try {
@@ -184,8 +185,8 @@ export default function Auth({ onLogin }: AuthProps) {
         registrationAttemptTime: new Date().toISOString()
       }));
       
-      // Proceed with OTP sending
-      await handleSendOtp(phone);
+      // Proceed with OTP sending (no longer needs phone passed)
+      await handleSendOtp();
     } catch (error: any) {
       setMessage(error.message || 'Registration failed. Please try again.');
       setLoading(false);
@@ -454,7 +455,7 @@ export default function Auth({ onLogin }: AuthProps) {
                   variant="outlined"
                   color="primary"
                   fullWidth
-                  onClick={() => handleSendOtp(phone)}
+                  onClick={() => handleSendOtp()} // Call without phone
                   disabled={loading || !otpTimeout}
                   sx={{ borderRadius: 3 }}
                 >

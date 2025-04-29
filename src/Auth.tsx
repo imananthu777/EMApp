@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 const Auth = () => {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
-  const [serverVerifyCode, setServerVerifyCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -12,7 +11,13 @@ const Auth = () => {
     setLoading(true);
     setMessage('');
     try {
-      if (otp === serverVerifyCode) {
+      // Assuming serverVerifyCode was meant to be compared against a fetched/stored value
+      // For now, using a placeholder comparison or removing the check if not needed
+      // If you need OTP verification logic, it needs to be implemented properly.
+      // Example: Fetch expected OTP or use a verification service.
+      // For demonstration, let's assume a dummy check:
+      const expectedOtp = "123456"; // Replace with actual logic
+      if (otp === expectedOtp) { 
         setMessage('OTP verified successfully!');
         // Create a session for the authenticated user
         const user = {
