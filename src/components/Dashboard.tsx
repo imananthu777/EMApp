@@ -27,6 +27,7 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import LockIcon from '@mui/icons-material/Lock';
 import { useState, useEffect } from 'react';
 import {
   Chart as ChartJS,
@@ -144,6 +145,18 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   });
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [currentFY, setCurrentFY] = useState<string>('');
+  // Add state for miscellaneous budget
+  const [miscBudget, setMiscBudget] = useState(0);
+  // Add state for archived month data
+  const [archivedMonth, setArchivedMonth] = useState<any>(null);
+  // Add state to track if month has ended
+  const [monthEnded, setMonthEnded] = useState(false);
+
+  // State for reset dialog
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetType, setResetType] = useState<'month' | 'fy' | 'all' | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetError, setResetError] = useState('');
 
   useEffect(() => {
     const now = new Date();
@@ -171,6 +184,11 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         categories: budget.categories || {}
       });
     }
+    // Load archived month if exists
+    const archiveKey = `archive_${user.id}_last_month`;
+    const archived = localStorage.getItem(archiveKey);
+    setArchivedMonth(archived ? JSON.parse(archived) : null);
+    setMonthEnded(!!archived);
   }, [user.id]);
 
   useEffect(() => {
@@ -183,6 +201,31 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const month = date.getMonth() + 1;
     return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
   };
+
+  // Helper to get days in a month
+  const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+
+  // Track the logical month start (reset after End Current Month)
+  const [logicalMonthStart, setLogicalMonthStart] = useState<Date>(() => new Date());
+
+  // When month is ended, reset logical month start
+  useEffect(() => {
+    if (monthEnded) setLogicalMonthStart(new Date());
+  }, [monthEnded]);
+
+  // Days left logic based on logicalMonthStart
+  const daysLeft = (() => {
+    const now = new Date();
+    const start = logicalMonthStart;
+    const daysInMonth = getDaysInMonth(start.getFullYear(), start.getMonth());
+    const diff = Math.max(0, daysInMonth - (now.getDate() - start.getDate()));
+    return diff;
+  })();
+  const daysInMonth = (() => {
+    const start = logicalMonthStart;
+    return getDaysInMonth(start.getFullYear(), start.getMonth());
+  })();
+  const daysLeftPercent = (daysLeft / daysInMonth) * 100;
 
   const handleSaveTransaction = () => {
     if (!newTransaction.amount || newTransaction.amount <= 0) {
@@ -256,26 +299,32 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setBudgetDialogOpen(true);
   };
 
+  // End Current Month handler
   const handleMonthEnd = () => {
-    const archiveKey = `archive_${user.id}_${new Date().toISOString().slice(0, 7)}`;
-    localStorage.setItem(archiveKey, JSON.stringify({
+    // Archive current month data
+    const archiveKey = `archive_${user.id}_last_month`;
+    const fyKey = `archive_${user.id}_fy_${currentFY}`;
+    const archiveData = {
       transactions,
       budget: monthlyBudget,
-      endDate: new Date().toISOString(),
-    }));
-
+      startDate: logicalMonthStart,
+      endDate: new Date(),
+    };
+    localStorage.setItem(archiveKey, JSON.stringify(archiveData));
+    // Append to FY archive
+    let fyArchive = JSON.parse(localStorage.getItem(fyKey) || '[]');
+    fyArchive.push(archiveData);
+    localStorage.setItem(fyKey, JSON.stringify(fyArchive));
+    // Clear current month
     setTransactions([]);
+    setMonthlyBudget(null);
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify([]));
-    
-    if (monthlyBudget) {
-      const newBudget = {
-        ...monthlyBudget,
-        id: Date.now().toString(),
-        month: new Date().toISOString().slice(0, 7),
-      };
-      setMonthlyBudget(newBudget);
-      localStorage.setItem(`budget_${user.id}`, JSON.stringify(newBudget));
-    }
+    localStorage.removeItem(`budget_${user.id}`);
+    setArchivedMonth(archiveData);
+    setMonthEnded(true);
+    setLogicalMonthStart(new Date());
+    // Disable download current month after ending month
+    setTimeout(() => setMonthEnded(false), 0);
   };
 
   const calculateTotalExpenses = () => {
@@ -363,7 +412,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       { wch: 30 },
       { wch: 15 },
       { wch: 12 },
-      { wch: 10 },
       { wch: 15 }
     ];
 
@@ -375,6 +423,137 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     
     saveAs(data, `transactions_FY_${currentFY}.xlsx`);
   };
+
+  // Helper to add closing balance to exported data (with initial balance)
+  function addClosingBalance(transactions: Transaction[], initialBalance = 0) {
+    let balance = initialBalance;
+    return transactions.map((t) => {
+      const amount = t.type === 'expense' ? -t.amount : t.amount;
+      balance += amount;
+      return {
+        Date: new Date(t.date).toLocaleDateString('en-IN'),
+        Description: t.description,
+        Category: t.category,
+        Amount: amount,
+        'Closing Balance': balance,
+        Type: t.type.charAt(0).toUpperCase() + t.type.slice(1),
+        'Financial Year': t.financialYear || getFYFromDate(t.date)
+      };
+    });
+  }
+
+  // Download Current Month Data (only enabled if monthEnded)
+  const handleDownloadCurrentMonth = () => {
+    if (!archivedMonth) return;
+    const excelData = addClosingBalance(archivedMonth.transactions);
+    const ws = XLSX.utils.json_to_sheet(excelData);
+    ws['!cols'] = [
+      { wch: 12 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 15 }, // Closing Balance
+      { wch: 10 },
+      { wch: 15 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'CurrentMonth');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(data, `current_month_data_${currentFY}.xlsx`);
+  };
+
+  // Download FY Data (all archived months except current)
+  const handleDownloadFY = () => {
+    const fyKey = `archive_${user.id}_fy_${currentFY}`;
+    let fyArchive = JSON.parse(localStorage.getItem(fyKey) || '[]');
+    if (monthEnded && fyArchive.length > 0) fyArchive = fyArchive.slice(0, -1);
+    // Flatten and add closing balance for each month, carrying over balance
+    let allTransactions: any[] = [];
+    let runningBalance = 0;
+    fyArchive.forEach((m: any) => {
+      const sortedTx = [...m.transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const txWithBalance = addClosingBalance(sortedTx, runningBalance);
+      if (txWithBalance.length > 0) {
+        runningBalance = txWithBalance[txWithBalance.length - 1]['Closing Balance'];
+      }
+      allTransactions = allTransactions.concat(txWithBalance);
+    });
+    if (allTransactions.length === 0) {
+      alert('No archived data for this FY.');
+      return;
+    }
+    const ws = XLSX.utils.json_to_sheet(allTransactions);
+    ws['!cols'] = [
+      { wch: 12 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 15 }, // Closing Balance
+      { wch: 10 },
+      { wch: 15 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'FYData');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(data, `fy_data_${currentFY}.xlsx`);
+  };
+
+  // --- Summary Calculations ---
+  const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+  const totalExpenses = calculateTotalExpenses();
+  // Calculate total budgeted expenses (sum of all category budgets)
+  const totalBudgetedExpenses = monthlyBudget ? Object.values(monthlyBudget.categories || {}).reduce((sum, v) => sum + v, 0) : 0;
+  // Calculate actual incurred expenses not included in budget
+  const budgetedCategories = monthlyBudget ? Object.keys(monthlyBudget.categories || {}) : [];
+  const unbudgetedExpenses = transactions.filter(t => t.type === 'expense' && !budgetedCategories.includes(t.category)).reduce((sum, t) => sum + t.amount, 0);
+  // Projected balance = total income - total budgeted expenses - total actual incurred expenses
+  const projectedBalance = totalIncome - totalBudgetedExpenses - totalExpenses;
+
+  const currentBalance = totalIncome - totalExpenses;
+  const availableBalance = monthlyBudget ? monthlyBudget.amount - totalExpenses : currentBalance;
+
+  // Helper to get user password (from localStorage)
+  function getUserPassword() {
+    const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+    return users[user?.id]?.password || '';
+  }
+
+  // Reset handlers
+  function handleResetConfirm() {
+    setResetError('');
+    if (resetPassword !== getUserPassword()) {
+      setResetError('Incorrect password.');
+      return;
+    }
+    if (resetType === 'month') {
+      setTransactions([]);
+      setMonthlyBudget(null);
+      localStorage.setItem(`transactions_${user.id}`, JSON.stringify([]));
+      localStorage.removeItem(`budget_${user.id}`);
+    } else if (resetType === 'fy') {
+      const fyKey = `archive_${user.id}_fy_${currentFY}`;
+      localStorage.removeItem(fyKey);
+    } else if (resetType === 'all') {
+      // Remove all user data
+      localStorage.removeItem(`transactions_${user.id}`);
+      localStorage.removeItem(`budget_${user.id}`);
+      localStorage.removeItem(`categories_${user.id}`);
+      localStorage.removeItem(`archive_${user.id}_last_month`);
+      // Remove all FY archives
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith(`archive_${user.id}_fy_`)) localStorage.removeItem(key);
+      });
+      setTransactions([]);
+      setMonthlyBudget(null);
+      setCategories(defaultCategories);
+    }
+    setResetDialogOpen(false);
+    setResetPassword('');
+    setResetType(null);
+    setResetError('');
+  }
 
   return (
     <Box 
@@ -509,20 +688,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                   }
                 }}
               >
-                {/* Days Left in Month */}
+                {/* Days Left in Month (update to use logical month) */}
                 {(() => {
-                  const now = new Date();
-                  const year = now.getFullYear();
-                  const month = now.getMonth();
-                  const totalDays = new Date(year, month + 1, 0).getDate();
-                  const daysLeft = totalDays - now.getDate();
-                  const percent = (daysLeft / totalDays) * 100;
                   return (
                     <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
                       <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
                         <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
-                        <CircularProgress variant="determinate" value={percent} size={40} thickness={5} color="primary" sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" alignItems="center" justifyContent="center">
+                        <CircularProgress variant="determinate" value={daysLeftPercent} size={40} thickness={5} color="primary" sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
                           <Typography variant="caption" fontWeight={700} color="primary.main" sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{daysLeft}</Typography>
                         </Box>
                       </Box>
@@ -540,7 +713,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                       <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
                         <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
                         <CircularProgress variant="determinate" value={percent} size={40} thickness={5} color={percent >= 100 ? 'error' : 'success'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" alignItems="center" justifyContent="center">
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
                           <Typography variant="caption" fontWeight={700} color={percent >= 100 ? 'error.main' : 'success.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Math.round(percent)}%</Typography>
                         </Box>
                       </Box>
@@ -558,7 +731,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                       <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
                         <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
                         <CircularProgress variant="determinate" value={percent > 100 ? 100 : percent} size={40} thickness={5} color={percent > 100 ? 'error' : 'info'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" alignItems="center" justifyContent="center">
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
                           <Typography variant="caption" fontWeight={700} color={percent > 100 ? 'error.main' : 'info.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{totalIncome ? Math.round(percent) : 0}%</Typography>
                         </Box>
                       </Box>
@@ -570,180 +743,205 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             </StyledPaper>
           </div>
         </Fade>
-        {/* Remaining code */}
-        <StyledPaper sx={{ p: { xs: 2, sm: 4 } }}>
-          <Stack spacing={2}>
-            <Stack 
-              direction={{ xs: 'column', sm: 'row' }} 
-              justifyContent="space-between" 
-              alignItems={{ xs: 'flex-start', sm: 'center' }} 
-              spacing={2}
-            >
-              <Stack direction="row" alignItems="center" spacing={2}>
-                <Typography variant="h6" fontWeight={600}>
-                  Transactions
-                </Typography>
-                {selectedTransaction && (
-                  <Stack direction="row" spacing={1}>
-                    <Button
-                      color="primary"
-                      onClick={() => {
-                        setNewTransaction({
-                          ...selectedTransaction,
-                          amount: selectedTransaction.amount,
-                          category: selectedTransaction.category,
-                          description: selectedTransaction.description,
-                          date: selectedTransaction.date,
-                          type: selectedTransaction.type
-                        });
-                        setTransactionDialogOpen(true);
-                      }}
-                      size="small"
-                      startIcon={<EditIcon fontSize="small" />}
-                      sx={{ textTransform: 'none' }}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      color="error"
-                      onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this transaction?')) {
-                          handleDeleteTransaction(selectedTransaction.id);
-                          setSelectedTransaction(null);
-                        }
-                      }}
-                      size="small"
-                      startIcon={<DeleteIcon fontSize="small" />}
-                      sx={{ textTransform: 'none' }}
-                    >
-                      Delete
-                    </Button>
-                  </Stack>
-                )}
-              </Stack>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} width={{ xs: '100%', sm: 'auto' }}>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<AddIcon />}
-                  onClick={() => {
-                    setSelectedTransaction(null);
-                    setNewTransaction({ type: 'expense', date: new Date().toISOString().split('T')[0] });
-                    setTransactionDialogOpen(true);
-                  }}
-                  sx={{ borderRadius: 2, width: { xs: '100%', sm: 'auto' } }}
-                >
-                  Add Transaction
-                </Button>
-              </Stack>
+        {/* --- Summary Section --- */}
+        <StyledPaper sx={{ mb: 3, p: { xs: 2, sm: 4 }, bgcolor: 'primary.lighter' }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={4} justifyContent="space-between" alignItems="center">
+            <Stack alignItems="center">
+              <Typography variant="subtitle2" color="text.secondary">Current Balance</Typography>
+              <Typography variant="h5" color={currentBalance >= 0 ? 'success.main' : 'error.main'} fontWeight={700}>
+                {formatIndianCurrency(currentBalance)}
+              </Typography>
             </Stack>
-            
-            <List sx={{ 
-              width: '100%', 
-              bgcolor: 'background.paper', 
-              borderRadius: { xs: 1, sm: 2 }, 
-              overflow: 'hidden',
-              '& .MuiListItem-root': {
-                flexDirection: { xs: 'column', sm: 'row' },
-                alignItems: { xs: 'flex-start', sm: 'center' },
-                gap: { xs: 1, sm: 0 }
-              },
-              '& .MuiListItemText-root': {
-                margin: { xs: 0, sm: 2 }
-              },
-              '& .MuiTypography-root.amount': {
-                alignSelf: { xs: 'flex-end', sm: 'center' }
-              }
-            }}>
-              {transactions.length === 0 ? (
-                <ListItem>
-                  <ListItemText 
-                    primary={
-                      <Typography variant="body1" textAlign="center">
-                        No transactions yet
-                      </Typography>
-                    }
-                    secondary={
-                      <Typography variant="body2" color="text.secondary" textAlign="center">
-                        Click the Add Transaction button to get started
-                      </Typography>
-                    }
-                  />
-                </ListItem>
-              ) : (
-                [...transactions]
-                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                  .map((transaction) => (
-                    <ListItem
-                      key={transaction.id}
-                      sx={{
-                        bgcolor: transaction.id === selectedTransaction?.id ? 'action.selected' : 'background.paper',
-                        borderBottom: '1px solid',
-                        borderColor: 'divider',
-                        '&:last-child': {
-                          borderBottom: 'none',
-                        },
-                        '&:hover': { 
-                          bgcolor: 'action.hover',
-                          cursor: 'pointer'
-                        },
-                        p: { xs: 2, sm: 2 },
-                      }}
-                      onClick={() => setSelectedTransaction(transaction)}
-                    >
-                      <ListItemText
-                        primary={
-                          <Typography variant="body1" fontWeight={500} sx={{ fontSize: { xs: '0.95rem', sm: '1rem' } }}>
-                            {transaction.description}
-                          </Typography>
-                        }
-                        secondary={
-                          <Stack 
-                            direction={{ xs: 'column', sm: 'row' }} 
-                            spacing={{ xs: 0.5, sm: 1 }} 
-                            alignItems={{ xs: 'flex-start', sm: 'center' }}
-                          >
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
-                              {transaction.category}
-                            </Typography>
-                            <Typography 
-                              variant="body2" 
-                              color="text.secondary" 
-                              sx={{ 
-                                display: { xs: 'none', sm: 'block' },
-                                fontSize: { xs: '0.8rem', sm: '0.875rem' }
-                              }}
-                            >
-                              •
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
-                              {new Date(transaction.date).toLocaleDateString('en-IN', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric'
-                              })}
-                            </Typography>
-                          </Stack>
-                        }
-                      />
-                      <Typography
-                        variant="body2"
-                        color={transaction.type === 'income' ? 'success.main' : 'error.main'}
-                        className="amount"
-                        sx={{ 
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                          fontSize: { xs: '0.95rem', sm: '1rem' }
-                        }}
-                      >
-                        {transaction.type === 'income' ? '+' : '-'}{formatIndianCurrency(transaction.amount)}
-                      </Typography>
-                    </ListItem>
-                ))
-              )}
-            </List>
+            <Stack alignItems="center">
+              <Typography variant="subtitle2" color="text.secondary">Total Expenses</Typography>
+              <Typography variant="h5" color="error.main" fontWeight={700}>
+                {formatIndianCurrency(totalExpenses)}
+              </Typography>
+            </Stack>
+            <Stack alignItems="center">
+              <Typography variant="subtitle2" color="text.secondary">Projected Balance</Typography>
+              <Typography variant="h5" color={projectedBalance >= 0 ? 'success.main' : 'error.main'} fontWeight={700}>
+                {formatIndianCurrency(projectedBalance)}
+              </Typography>
+            </Stack>
           </Stack>
         </StyledPaper>
+        {/* Only show Transactions card if monthly budget is set */}
+        {monthlyBudget && (
+          <StyledPaper sx={{ p: { xs: 2, sm: 4 } }}>
+            <Stack spacing={2}>
+              <Stack 
+                direction={{ xs: 'column', sm: 'row' }} 
+                justifyContent="space-between" 
+                alignItems={{ xs: 'flex-start', sm: 'center' }} 
+                spacing={2}
+              >
+                <Stack direction="row" alignItems="center" spacing={2}>
+                  <Typography variant="h6" fontWeight={600}>
+                    Transactions
+                  </Typography>
+                  {selectedTransaction && (
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        color="primary"
+                        onClick={() => {
+                          setNewTransaction({
+                            ...selectedTransaction,
+                            amount: selectedTransaction.amount,
+                            category: selectedTransaction.category,
+                            description: selectedTransaction.description,
+                            date: selectedTransaction.date,
+                            type: selectedTransaction.type
+                          });
+                          setTransactionDialogOpen(true);
+                        }}
+                        size="small"
+                        startIcon={<EditIcon fontSize="small" />}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        color="error"
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to delete this transaction?')) {
+                            handleDeleteTransaction(selectedTransaction.id);
+                            setSelectedTransaction(null);
+                          }
+                        }}
+                        size="small"
+                        startIcon={<DeleteIcon fontSize="small" />}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Delete
+                      </Button>
+                    </Stack>
+                  )}
+                </Stack>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} width={{ xs: '100%', sm: 'auto' }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      setSelectedTransaction(null);
+                      setNewTransaction({ type: 'expense', date: new Date().toISOString().split('T')[0] });
+                      setTransactionDialogOpen(true);
+                    }}
+                    sx={{ borderRadius: 2, width: { xs: '100%', sm: 'auto' } }}
+                  >
+                    Add Transaction
+                  </Button>
+                </Stack>
+              </Stack>
+              
+              <List sx={{ 
+                width: '100%', 
+                bgcolor: 'background.paper', 
+                borderRadius: { xs: 1, sm: 2 }, 
+                overflow: 'hidden',
+                '& .MuiListItem-root': {
+                  flexDirection: { xs: 'column', sm: 'row' },
+                  alignItems: { xs: 'flex-start', sm: 'center' },
+                  gap: { xs: 1, sm: 0 }
+                },
+                '& .MuiListItemText-root': {
+                  margin: { xs: 0, sm: 2 }
+                },
+                '& .MuiTypography-root.amount': {
+                  alignSelf: { xs: 'flex-end', sm: 'center' }
+                }
+              }}>
+                {transactions.length === 0 ? (
+                  <ListItem>
+                    <ListItemText 
+                      primary={
+                        <Typography variant="body1" textAlign="center">
+                          No transactions yet
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography variant="body2" color="text.secondary" textAlign="center">
+                          Click the Add Transaction button to get started
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                ) : (
+                  [...transactions]
+                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                    .map((transaction) => (
+                      <ListItem
+                        key={transaction.id}
+                        sx={{
+                          bgcolor: transaction.id === selectedTransaction?.id ? 'action.selected' : 'background.paper',
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          '&:last-child': {
+                            borderBottom: 'none',
+                          },
+                          '&:hover': { 
+                            bgcolor: 'action.hover',
+                            cursor: 'pointer'
+                          },
+                          p: { xs: 2, sm: 2 },
+                        }}
+                        onClick={() => setSelectedTransaction(transaction)}
+                      >
+                        <ListItemText
+                          primary={
+                            <Typography variant="body1" fontWeight={500} sx={{ fontSize: { xs: '0.95rem', sm: '1rem' } }}>
+                              {transaction.description}
+                            </Typography>
+                          }
+                          secondary={
+                            <Stack 
+                              direction={{ xs: 'column', sm: 'row' }} 
+                              spacing={{ xs: 0.5, sm: 1 }} 
+                              alignItems={{ xs: 'flex-start', sm: 'center' }}
+                            >
+                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
+                                {transaction.category}
+                              </Typography>
+                              <Typography 
+                                variant="body2" 
+                                color="text.secondary" 
+                                sx={{ 
+                                  display: { xs: 'none', sm: 'block' },
+                                  fontSize: { xs: '0.8rem', sm: '0.875rem' }
+                                }}
+                              >
+                                •
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
+                                {new Date(transaction.date).toLocaleDateString('en-IN', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric'
+                                })}
+                              </Typography>
+                            </Stack>
+                          }
+                        />
+                        <Typography
+                          variant="body2"
+                          color={transaction.type === 'income' ? 'success.main' : 'error.main'}
+                          className="amount"
+                          sx={{ 
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            fontSize: { xs: '0.95rem', sm: '1rem' }
+                          }}
+                        >
+                          {transaction.type === 'income' ? '+' : '-'}{formatIndianCurrency(transaction.amount)}
+                        </Typography>
+                      </ListItem>
+                  ))
+                )}
+              </List>
+            </Stack>
+          </StyledPaper>
+        )}
 
         <StyledPaper sx={{ p: { xs: 2, sm: 4 } }}>
           <Stack spacing={2}>
@@ -754,13 +952,28 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                   Monthly Budget
                 </Typography>
               </Stack>
-              <Button
-                variant="outlined"
-                onClick={handleOpenBudgetDialog}
-                sx={{ borderRadius: 2, width: { xs: '100%', sm: 'auto' }, mt: { xs: 1, sm: 0 } }}
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={2}
+                alignItems={{ xs: 'center', sm: 'center' }}
+                justifyContent={{ xs: 'center', sm: 'flex-end' }}
+                sx={{ width: { xs: '100%', sm: 'auto' } }}
               >
-                Set Budget
-              </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => setCategoryDialogOpen(true)}
+                  sx={{ borderRadius: 2, width: { xs: '100%', sm: 'auto' } }}
+                >
+                  Add/Change Categories
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={handleOpenBudgetDialog}
+                  sx={{ borderRadius: 2, width: { xs: '100%', sm: 'auto' } }}
+                >
+                  Set Budget
+                </Button>
+              </Stack>
             </Stack>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="body1" color="text.secondary">
@@ -880,59 +1093,31 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
               <Button
                 variant="contained"
                 color="primary"
-                onClick={handleDownloadExcel}
-                disabled={transactions.length === 0}
+                onClick={handleDownloadCurrentMonth}
+                disabled={!monthEnded || !archivedMonth}
                 sx={{ borderRadius: 2 }}
               >
-                Download All Transactions
+                Download Current Month Data
               </Button>
               <Button
                 variant="outlined"
                 color="primary"
-                onClick={() => {
-                  const [startYear] = currentFY.split('-');
-                  const startDate = new Date(Number(startYear), 3, 1);
-                  const fyTransactions = transactions.filter(t => new Date(t.date) >= startDate);
-                  
-                  if (fyTransactions.length === 0) {
-                    alert('No transactions found for current financial year');
-                    return;
-                  }
-
-                  const excelData = fyTransactions
-                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                    .map(t => ({
-                      Date: new Date(t.date).toLocaleDateString('en-IN'),
-                      Description: t.description,
-                      Category: t.category,
-                      Amount: t.type === 'expense' ? -t.amount : t.amount,
-                      Type: t.type.charAt(0).toUpperCase() + t.type.slice(1),
-                      'Financial Year': t.financialYear || getFYFromDate(t.date)
-                    }));
-
-                  const ws = XLSX.utils.json_to_sheet(excelData);
-                  ws['!cols'] = [
-                    { wch: 12 },
-                    { wch: 30 },
-                    { wch: 15 },
-                    { wch: 12 },
-                    { wch: 10 },
-                    { wch: 15 }
-                  ];
-
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
-                  const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-                  const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                  saveAs(data, `transactions_FY_${currentFY}.xlsx`);
-                }}
-                disabled={transactions.length === 0}
+                onClick={handleDownloadFY}
                 sx={{ borderRadius: 2 }}
               >
                 Download Current FY (FY {currentFY})
               </Button>
+              <Button
+                variant="contained"
+                color="error"
+                startIcon={<LockIcon />}
+                onClick={() => setResetDialogOpen(true)}
+                sx={{ borderRadius: 2 }}
+              >
+                Reset All
+              </Button>
               <Typography variant="caption" color="text.secondary" textAlign="center">
-                Download your transaction data in Excel format. Current FY option includes transactions from April 1st, {currentFY.split('-')[0]}
+                Download your transaction data in Excel format. FY option includes all ended months except the current month.
               </Typography>
             </Stack>
           </Stack>
@@ -1005,7 +1190,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     setCategoryDialogOpen(true);
                   }}
                 >
-                  Manage Categories
+                  Add/Change Categories
                 </Button>
               </Stack>
               <TextField
@@ -1172,16 +1357,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
           <DialogTitle>Set Monthly Budget</DialogTitle>
           <DialogContent>
             <Stack spacing={3} mt={2}>
+              {/* Show computed total budget */}
               <TextField
-                label="Total Budget (₹)"
-                type="number"
-                value={tempBudget.total}
-                onChange={e => setTempBudget({
-                  ...tempBudget,
-                  total: parseFloat(e.target.value) || 0
-                })}
+                label="Total Monthly Budget (auto-calculated)"
+                value={
+                  Object.values(tempBudget.categories).reduce((sum, v) => sum + v, 0) + miscBudget
+                }
+                InputProps={{ readOnly: true }}
                 fullWidth
-                inputProps={{ min: 0, step: 0.01 }}
               />
               <Typography variant="subtitle1" fontWeight={600} mt={2}>
                 Category Budgets
@@ -1204,14 +1387,56 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     inputProps={{ min: 0, step: 0.01 }}
                   />
                 ))}
+                {/* Miscellaneous budget input */}
+                <TextField
+                  label="Miscellaneous"
+                  type="number"
+                  value={miscBudget}
+                  onChange={e => setMiscBudget(parseFloat(e.target.value) || 0)}
+                  fullWidth
+                  inputProps={{ min: 0, step: 0.01 }}
+                />
               </Stack>
             </Stack>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setBudgetDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => handleUpdateBudget({ total: tempBudget.total, categories: tempBudget.categories })} variant="contained" color="primary">
+            <Button onClick={() => {
+              const total = Object.values(tempBudget.categories).reduce((sum, v) => sum + v, 0) + miscBudget;
+              handleUpdateBudget({ total, categories: { ...tempBudget.categories, Miscellaneous: miscBudget } });
+            }} variant="contained" color="primary">
               Save
             </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={resetDialogOpen} onClose={() => setResetDialogOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Reset Data</DialogTitle>
+          <DialogContent>
+            <Stack spacing={2} mt={1}>
+              <Typography color="error" fontWeight={600}>Warning: This action cannot be undone!</Typography>
+              <Button variant={resetType === 'month' ? 'contained' : 'outlined'} color="error" onClick={() => setResetType('month')} fullWidth>Reset Current Month</Button>
+              <Button variant={resetType === 'fy' ? 'contained' : 'outlined'} color="error" onClick={() => setResetType('fy')} fullWidth>Reset Current FY</Button>
+              <Button variant={resetType === 'all' ? 'contained' : 'outlined'} color="error" onClick={() => setResetType('all')} fullWidth>Reset All Data</Button>
+              {resetType && (
+                <>
+                  <TextField
+                    label="Enter your password to confirm"
+                    type="password"
+                    value={resetPassword}
+                    onChange={e => setResetPassword(e.target.value)}
+                    fullWidth
+                    error={!!resetError}
+                    helperText={resetError}
+                    autoFocus
+                  />
+                  <Button variant="contained" color="error" onClick={handleResetConfirm} fullWidth>Confirm Reset</Button>
+                </>
+              )}
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setResetDialogOpen(false)}>Cancel</Button>
           </DialogActions>
         </Dialog>
       </Box>

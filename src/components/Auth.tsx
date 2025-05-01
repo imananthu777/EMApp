@@ -41,6 +41,13 @@ export default function Auth({ onLogin }: AuthProps) {
   const [otpTimeout, setOtpTimeout] = useState(false);
   const [serverVerifyCode, setServerVerifyCode] = useState('');
   const OTP_TIMEOUT = 300;
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserPassword2, setNewUserPassword2] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [pendingUser, setPendingUser] = useState<any>(null);
 
   React.useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -85,21 +92,24 @@ export default function Auth({ onLogin }: AuthProps) {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-    
     try {
       const userData = localStorage.getItem('registeredUsers');
       const users = userData ? JSON.parse(userData) : {};
-      
-      if (users[phone]?.password === password) {
-        onLogin({ ...users[phone], id: phone });
-        setMessage('Login successful!');
+      const user = users[phone];
+      if (user?.password === password) {
+        if (user.mustChangePassword) {
+          setMustChangePassword(true);
+          setPendingUser({ ...user, id: phone });
+        } else {
+          onLogin({ ...user, id: phone });
+          setMessage('Login successful!');
+        }
       } else {
         setMessage('Invalid phone number or password.');
       }
     } catch (error: any) {
       setMessage(error.message || 'Login failed.');
     }
-    
     setLoading(false);
   };
 
@@ -223,6 +233,117 @@ export default function Auth({ onLogin }: AuthProps) {
     }
     setLoading(false);
   };
+
+  // Admin login handler
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setAdminError('');
+    // For demo, hardcode admin credentials
+    if (phone === 'admin' && password === 'admin123') {
+      onLogin({ id: 'admin', isAdmin: true });
+    } else {
+      setAdminError('Invalid admin credentials');
+    }
+    setLoading(false);
+  };
+
+  // Forgot password handler (user)
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
+    try {
+      // Generate a reset token and store it for the user
+      const token = Math.random().toString(36).substring(2, 10);
+      const resetTokens = JSON.parse(localStorage.getItem('resetTokens') || '{}');
+      resetTokens[phone] = token;
+      localStorage.setItem('resetTokens', JSON.stringify(resetTokens));
+      setMessage(`Password reset requested. Contact admin with this code: ${token}`);
+    } catch (error: any) {
+      setMessage(error.message || 'Failed to request password reset.');
+    }
+    setLoading(false);
+  };
+
+  // Handle forced password change after admin reset
+  const handleForcePasswordChange = (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePasswordError('');
+    if (!newUserPassword || !newUserPassword2) {
+      setChangePasswordError('Please enter and confirm your new password.');
+      return;
+    }
+    if (newUserPassword !== newUserPassword2) {
+      setChangePasswordError('Passwords do not match.');
+      return;
+    }
+    if (newUserPassword.length < 8) {
+      setChangePasswordError('Password must be at least 8 characters long.');
+      return;
+    }
+    // Password strength validation
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(newUserPassword)) {
+      setChangePasswordError('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character');
+      return;
+    }
+    // Update user password and clear mustChangePassword
+    const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+    users[pendingUser.id].password = newUserPassword;
+    delete users[pendingUser.id].mustChangePassword;
+    localStorage.setItem('registeredUsers', JSON.stringify(users));
+    setMustChangePassword(false);
+    setPendingUser(null);
+    setNewUserPassword('');
+    setNewUserPassword2('');
+    setChangePasswordError('');
+    onLogin({ ...users[pendingUser.id], id: pendingUser.id });
+  };
+
+  if (mustChangePassword && pendingUser) {
+    return (
+      <Box display="flex" alignItems="center" justifyContent="center" width="100vw" height="100vh">
+        <CenteredPaper>
+          <form onSubmit={handleForcePasswordChange}>
+            <Stack spacing={3}>
+              <Typography variant="h6" fontWeight={700} textAlign="center">
+                Change Your Password
+              </Typography>
+              <TextField
+                label="New Password"
+                type="password"
+                value={newUserPassword}
+                onChange={e => setNewUserPassword(e.target.value)}
+                fullWidth
+                required
+              />
+              <TextField
+                label="Confirm New Password"
+                type="password"
+                value={newUserPassword2}
+                onChange={e => setNewUserPassword2(e.target.value)}
+                fullWidth
+                required
+              />
+              {changePasswordError && (
+                <Typography color="error" textAlign="center">{changePasswordError}</Typography>
+              )}
+              <Button
+                type="submit"
+                variant="contained"
+                color="primary"
+                fullWidth
+                sx={{ borderRadius: 3, fontWeight: 600 }}
+              >
+                Change Password & Login
+              </Button>
+            </Stack>
+          </form>
+        </CenteredPaper>
+      </Box>
+    );
+  }
 
   if (mode === 'greeting') {
     return (
@@ -479,6 +600,56 @@ export default function Auth({ onLogin }: AuthProps) {
             </form>
           </CenteredPaper>
         </Fade>
+      </Box>
+    );
+  }
+
+  if (mode === 'forgot-password') {
+    return (
+      <Box display="flex" alignItems="center" justifyContent="center" width="100vw" height="100vh">
+        <CenteredPaper>
+          <form onSubmit={handleForgotPassword}>
+            <Stack spacing={3}>
+              <Typography variant="h6" fontWeight={700} textAlign="center">
+                Forgot Password
+              </Typography>
+              <TextField
+                label="Mobile Number"
+                type="tel"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                fullWidth
+                required
+                inputProps={{ maxLength: 15 }}
+                autoFocus
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                color="primary"
+                fullWidth
+                disabled={loading}
+                sx={{ borderRadius: 3, fontWeight: 600 }}
+              >
+                {loading ? 'Requesting...' : 'Request Password Reset'}
+              </Button>
+              {message && (
+                <Typography mt={2} textAlign="center" color="primary.main">
+                  {message}
+                </Typography>
+              )}
+              <Button
+                variant="text"
+                color="primary"
+                fullWidth
+                onClick={() => setMode('login')}
+                sx={{ borderRadius: 3 }}
+              >
+                Back to Login
+              </Button>
+            </Stack>
+          </form>
+        </CenteredPaper>
       </Box>
     );
   }
