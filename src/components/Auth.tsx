@@ -46,6 +46,8 @@ export default function Auth({ onLogin }: AuthProps) {
   const [newUserPassword2, setNewUserPassword2] = useState('');
   const [changePasswordError, setChangePasswordError] = useState('');
   const [pendingUser, setPendingUser] = useState<any>(null);
+  // State for showing reset password to user
+  const [resetPasswordForUser, setResetPasswordForUser] = useState<string | null>(null);
 
   React.useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -248,14 +250,21 @@ export default function Auth({ onLogin }: AuthProps) {
     setLoading(true);
     setMessage('');
     try {
-      // Generate a reset token and store it for the user
-      const token = Math.random().toString(36).substring(2, 10);
-      const resetTokens = JSON.parse(localStorage.getItem('resetTokens') || '{}');
-      resetTokens[phone] = token;
-      localStorage.setItem('resetTokens', JSON.stringify(resetTokens));
-      setMessage(`Password reset requested. Contact admin with this code: ${token}`);
+      // Generate a random password and set it for the user
+      const randomPass = Math.random().toString(36).slice(-8);
+      const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+      if (!users[phone]) {
+        setMessage('No user found with this phone number.');
+        setLoading(false);
+        return;
+      }
+      users[phone].password = randomPass;
+      users[phone].mustChangePassword = true;
+      localStorage.setItem('registeredUsers', JSON.stringify(users));
+      setResetPasswordForUser(randomPass);
+      setMessage('Your password has been reset. Use the password below to login. You will be asked to change it after login.');
     } catch (error: any) {
-      setMessage(error.message || 'Failed to request password reset.');
+      setMessage(error.message || 'Failed to reset password.');
     }
     setLoading(false);
   };
@@ -625,8 +634,13 @@ export default function Auth({ onLogin }: AuthProps) {
                 disabled={loading}
                 sx={{ borderRadius: 3, fontWeight: 600 }}
               >
-                {loading ? 'Requesting...' : 'Request Password Reset'}
+                {loading ? 'Resetting...' : 'Reset Password'}
               </Button>
+              {resetPasswordForUser && (
+                <Typography mt={2} textAlign="center" color="success.main">
+                  Your new password: <b>{resetPasswordForUser}</b>
+                </Typography>
+              )}
               {message && (
                 <Typography mt={2} textAlign="center" color="primary.main">
                   {message}

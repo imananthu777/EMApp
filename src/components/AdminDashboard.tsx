@@ -30,6 +30,8 @@ export default function AdminDashboard() {
     localStorage.setItem('registeredUsers', JSON.stringify(allUsers));
     setNewPassword(randomPass);
     setMessage(`Password reset for ${userId}. New password: ${randomPass}`);
+    // Store the new password for user to see on forgot password page
+    localStorage.setItem(`resetPasswordFor_${userId}`, randomPass);
     // Remove reset token after reset
     const tokens = { ...resetTokens };
     delete tokens[userId];
