@@ -175,7 +175,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     }
   };
 
-  // Fetch all user data types from server and set state
+  // Add state to track last sync timestamp
+  const [lastServerSync, setLastServerSync] = useState<number>(0);
+
+  // Enhanced function to fetch all user data from server and detect changes
   const fetchAllUserDataFromServer = async () => {
     setLoading(true);
     try {
@@ -185,19 +188,99 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'categories' }).catch(() => null),
         fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'archivedMonth' }).catch(() => null),
       ]);
-      if (serverTransactions) setTransactions(serverTransactions);
-      if (serverBudget) setMonthlyBudget(serverBudget);
-      if (serverCategories) setCategories(serverCategories);
-      if (serverArchivedMonth) setArchivedMonth(serverArchivedMonth);
-      setMonthEnded(!!serverArchivedMonth);
+
+      // Update local state with server data when server data exists
+      let hasChanges = false;
+
+      if (serverTransactions) {
+        // Compare with current transactions - implement deep comparison 
+        const currentJSON = JSON.stringify(transactions.sort((a, b) => a.id.localeCompare(b.id)));
+        const serverJSON = JSON.stringify(serverTransactions.sort((a, b) => a.id.localeCompare(b.id)));
+        
+        if (currentJSON !== serverJSON) {
+          console.log('Server transactions differ from local - updating local');
+          setTransactions(serverTransactions);
+          localStorage.setItem(`transactions_${user.id}`, JSON.stringify(serverTransactions));
+          hasChanges = true;
+        }
+      }
+
+      if (serverBudget) {
+        // Compare with current budget
+        const currentJSON = JSON.stringify(monthlyBudget || {});
+        const serverJSON = JSON.stringify(serverBudget);
+        
+        if (currentJSON !== serverJSON) {
+          console.log('Server budget differs from local - updating local');
+          setMonthlyBudget(serverBudget);
+          localStorage.setItem(`budget_${user.id}`, JSON.stringify(serverBudget));
+          hasChanges = true;
+        }
+      }
+
+      if (serverCategories) {
+        // Compare with current categories
+        const currentJSON = JSON.stringify(categories.sort((a, b) => a.name.localeCompare(b.name)));
+        const serverJSON = JSON.stringify(serverCategories.sort((a, b) => a.name.localeCompare(b.name)));
+        
+        if (currentJSON !== serverJSON) {
+          console.log('Server categories differ from local - updating local');
+          setCategories(serverCategories);
+          localStorage.setItem(`categories_${user.id}`, JSON.stringify(serverCategories));
+          hasChanges = true;
+        }
+      }
+
+      if (serverArchivedMonth) {
+        // Compare with current archived month
+        const currentJSON = JSON.stringify(archivedMonth || {});
+        const serverJSON = JSON.stringify(serverArchivedMonth);
+        
+        if (currentJSON !== serverJSON) {
+          console.log('Server archived month differs from local - updating local');
+          setArchivedMonth(serverArchivedMonth);
+          const archiveKey = `archive_${user.id}_last_month`;
+          localStorage.setItem(archiveKey, JSON.stringify(serverArchivedMonth));
+          setMonthEnded(true);
+          hasChanges = true;
+        }
+      }
+
+      // Update last server sync timestamp
+      setLastServerSync(Date.now());
+      
+      if (hasChanges) {
+        console.log('Applied server changes to local state');
+      }
     } catch (error) {
       console.error('Error fetching all user data from server:', error);
-      loadFromLocalStorage();
+      if (lastServerSync === 0) {
+        // Only load from localStorage if we haven't successfully synced before
+        loadFromLocalStorage();
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  // Set up periodic sync from server
+  useEffect(() => {
+    // Skip when loading
+    if (loading) return;
+    
+    // Initial fetch already happens on mount
+    
+    // Set up interval to check for server changes
+    const serverSyncInterval = setInterval(() => {
+      console.log('Checking server for changes...');
+      fetchAllUserDataFromServer();
+    }, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(serverSyncInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user.id]); // Only recreate interval when loading or user changes
+
+  // Fetch all user data types from server and set state
   useEffect(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -244,7 +327,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setMonthEnded(!!archived);
   };
 
-  // Function to sync local data to server with debounce
+  // Enhanced sync to server function
   const syncLocalToServer = async () => {
     try {
       setIsSyncing(true);
