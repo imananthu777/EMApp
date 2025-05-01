@@ -28,6 +28,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import LockIcon from '@mui/icons-material/Lock';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useState, useEffect } from 'react';
 import {
   Chart as ChartJS,
@@ -41,7 +42,8 @@ import {
 } from 'chart.js';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { fetchUserDataByType, saveUserDataByType } from '../lib/userDataService';
+import { fetchUserData, saveUserData, fetchUserDataByType, saveUserDataByType } from '../lib/userDataService';
+import SyncPopup from './SyncPopup';
 
 ChartJS.register(
   ArcElement,
@@ -165,6 +167,18 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const [resetPassword, setResetPassword] = useState('');
   const [resetError, setResetError] = useState('');
 
+  const [isSyncPopupOpen, setSyncPopupOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      await syncLocalToServer();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   useEffect(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -260,11 +274,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setMonthEnded(!!archived);
   };
 
-  // Enhance error handling and add retry logic for syncing data to the server
+  // Function to sync local data to server
   const syncLocalToServer = async () => {
     try {
       setSyncing(true);
-      setSyncError(null);
 
       await saveUserDataByType({
         mobile: user.id,
@@ -297,9 +310,26 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setSyncError(null);
     } catch (error) {
       console.error('Error syncing to server:', error);
-      setSyncError('Failed to sync data to server. Changes may not be available on other devices. Please check your connection and try again.');
+      setSyncError('Failed to sync data to server. Changes may not be available on other devices.');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // Helper function to update localStorage
+  const updateLocalStorage = (data: any) => {
+    if (data.transactions)
+      localStorage.setItem(`transactions_${user.id}`, JSON.stringify(data.transactions));
+
+    if (data.monthlyBudget)
+      localStorage.setItem(`budget_${user.id}`, JSON.stringify(data.monthlyBudget));
+
+    if (data.categories)
+      localStorage.setItem(`categories_${user.id}`, JSON.stringify(data.categories));
+
+    if (data.archivedMonth) {
+      const archiveKey = `archive_${user.id}_last_month`;
+      localStorage.setItem(archiveKey, JSON.stringify(data.archivedMonth));
     }
   };
 
@@ -761,6 +791,20 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     ml: 2
                   }}
                 >
+                  <IconButton onClick={() => setSyncPopupOpen(true)} color="primary" size="small">
+                    {isSyncing ? <CircularProgress size={20} /> : <SyncIcon />}
+                  </IconButton>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                      display: { xs: 'none', sm: 'block' },
+                      fontSize: '0.875rem',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    Sync
+                  </Typography>
                   <Typography
                     variant="body2"
                     color="text.secondary"
@@ -1543,20 +1587,11 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
           </DialogActions>
         </Dialog>
 
-        {/* Add a retry button in the UI to allow users to manually retry syncing */}
-        {syncError && (
-          <Box mt={2}>
-            <Typography color="error">{syncError}</Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={syncLocalToServer}
-              disabled={syncing}
-            >
-              Retry Sync
-            </Button>
-          </Box>
-        )}
+        <SyncPopup
+          open={isSyncPopupOpen}
+          onClose={() => setSyncPopupOpen(false)}
+          onSync={handleSync}
+        />
       </Box>
     </Box>
   );
