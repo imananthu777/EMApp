@@ -7,9 +7,7 @@ import {
   Button,
   Typography,
   CircularProgress,
-  IconButton,
 } from '@mui/material';
-import SyncIcon from '@mui/icons-material/Sync';
 
 export default function SyncPopup({ open, onClose, onSync }: { open: boolean; onClose: () => void; onSync: () => void }) {
   const [syncing, setSyncing] = useState(false);
