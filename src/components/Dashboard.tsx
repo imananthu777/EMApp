@@ -41,7 +41,7 @@ import {
 } from 'chart.js';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { fetchUserData, saveUserData, fetchUserDataByType, saveUserDataByType } from '../lib/userDataService';
+import { fetchUserDataByType, saveUserDataByType } from '../lib/userDataService';
 
 ChartJS.register(
   ArcElement,
@@ -300,23 +300,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setSyncError('Failed to sync data to server. Changes may not be available on other devices. Please check your connection and try again.');
     } finally {
       setSyncing(false);
-    }
-  };
-
-  // Helper function to update localStorage
-  const updateLocalStorage = (data: any) => {
-    if (data.transactions)
-      localStorage.setItem(`transactions_${user.id}`, JSON.stringify(data.transactions));
-
-    if (data.monthlyBudget)
-      localStorage.setItem(`budget_${user.id}`, JSON.stringify(data.monthlyBudget));
-
-    if (data.categories)
-      localStorage.setItem(`categories_${user.id}`, JSON.stringify(data.categories));
-
-    if (data.archivedMonth) {
-      const archiveKey = `archive_${user.id}_last_month`;
-      localStorage.setItem(archiveKey, JSON.stringify(data.archivedMonth));
     }
   };
 
