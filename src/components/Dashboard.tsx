@@ -156,11 +156,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const [monthEnded, setMonthEnded] = useState(false);
   // Add state for loading data
   const [loading, setLoading] = useState(true);
-  // Add state for syncing data
-  const [syncing, setSyncing] = useState(false);
-  // Add state for sync errors
-  const [syncError, setSyncError] = useState<string | null>(null);
-
+  // Remove unused syncing and syncError states
   // State for reset dialog
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetType, setResetType] = useState<'month' | 'fy' | 'all' | null>(null);
@@ -193,8 +189,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   // Function to load user data from server or fallback to local
   const loadUserData = async () => {
     setLoading(true);
-    setSyncError(null);
-
     try {
       // Fetch transactions
       const serverTransactions = await fetchUserDataByType({
@@ -231,8 +225,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setMonthEnded(!!serverArchivedMonth);
     } catch (error) {
       console.error('Error loading user data:', error);
-      setSyncError('Failed to load data from server.');
-
       // Fall back to local storage
       loadFromLocalStorage();
     } finally {
@@ -277,7 +269,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   // Function to sync local data to server
   const syncLocalToServer = async () => {
     try {
-      setSyncing(true);
+      setIsSyncing(true);
 
       await saveUserDataByType({
         mobile: user.id,
@@ -307,12 +299,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         data: archivedMonth,
       });
 
-      setSyncError(null);
     } catch (error) {
       console.error('Error syncing to server:', error);
-      setSyncError('Failed to sync data to server. Changes may not be available on other devices.');
     } finally {
-      setSyncing(false);
+      setIsSyncing(false);
     }
   };
 
