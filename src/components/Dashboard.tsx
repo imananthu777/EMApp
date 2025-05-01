@@ -778,72 +778,32 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     <LogoutIcon />
                   </IconButton>
                 </Stack>
-              </Stack>
-              <Stack 
-                direction={{ xs: 'row', sm: 'row' }} 
-                spacing={{ xs: 3, sm: 4 }} 
-                alignItems="center" 
-                justifyContent="flex-end" 
-                width="100%"
-                mt={{ xs: 2, sm: 0 }}
-                sx={{
-                  flexWrap: 'nowrap',
-                  '& > *': {
-                    minWidth: { sm: 'auto' }
-                  }
-                }}
-              >
-                {/* Days Left in Month (update to use logical month) */}
-                {(() => {
-                  return (
-                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
-                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
-                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
-                        <CircularProgress variant="determinate" value={daysLeftPercent} size={40} thickness={5} color="primary" sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
-                          <Typography variant="caption" fontWeight={700} color="primary.main" sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{daysLeft}</Typography>
-                        </Box>
-                      </Box>
-                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Days Left</Typography>
-                    </Box>
-                  );
-                })()}
-                {/* Budget Utilized */}
-                {(() => {
-                  const budget = monthlyBudget?.amount || 0;
-                  const spent = calculateTotalExpenses();
-                  const percent = budget ? Math.min((spent / budget) * 100, 100) : 0;
-                  return (
-                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
-                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
-                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
-                        <CircularProgress variant="determinate" value={percent} size={40} thickness={5} color={percent >= 100 ? 'error' : 'success'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
-                          <Typography variant="caption" fontWeight={700} color={percent >= 100 ? 'error.main' : 'success.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Math.round(percent)}%</Typography>
-                        </Box>
-                      </Box>
-                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Budget Used</Typography>
-                    </Box>
-                  );
-                })()}
-                {/* Expenses over Income */}
-                {(() => {
-                  const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-                  const totalExpense = calculateTotalExpenses();
-                  const percent = totalIncome ? Math.min((totalExpense / totalIncome) * 100, 999) : 0;
-                  return (
-                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
-                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
-                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
-                        <CircularProgress variant="determinate" value={percent > 100 ? 100 : percent} size={40} thickness={5} color={percent > 100 ? 'error' : 'info'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
-                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
-                          <Typography variant="caption" fontWeight={700} color={percent > 100 ? 'error.main' : 'info.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{totalIncome ? Math.round(percent) : 0}%</Typography>
-                        </Box>
-                      </Box>
-                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Exp/Inc</Typography>
-                    </Box>
-                  );
-                })()}
+                <Stack 
+                  direction={{ xs: 'row', sm: 'row' }} 
+                  spacing={{ xs: 3, sm: 4 }} 
+                  alignItems="center" 
+                  justifyContent="flex-end" 
+                  width="100%"
+                  mt={{ xs: 2, sm: 0 }}
+                  sx={{
+                    flexWrap: 'nowrap',
+                    '& > *': {
+                      minWidth: { sm: 'auto' }
+                    }
+                  }}
+                >
+                  {syncing && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CircularProgress size={16} />
+                      Syncing...
+                    </Typography>
+                  )}
+                  {syncError && (
+                    <Typography variant="caption" color="error">
+                      {syncError}
+                    </Typography>
+                  )}
+                </Stack>
               </Stack>
             </StyledPaper>
           </div>
@@ -1109,6 +1069,31 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                 Warning: You have exceeded your monthly budget by {formatIndianCurrency(calculateTotalExpenses() - monthlyBudget.amount)}!
               </Typography>
             )}
+            <LinearProgress 
+              variant="determinate" 
+              value={daysLeftPercent} 
+              color={daysLeftPercent > 100 ? "error" : "primary"}
+              sx={{ 
+                height: 8, 
+                borderRadius: 4,
+                my: 1,
+                bgcolor: 'background.paper'
+              }} 
+            />
+            {/* Add sync status display */}
+            <Stack direction="row" justifyContent="flex-end" spacing={1}>
+              {syncing && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircularProgress size={12} />
+                  Syncing...
+                </Typography>
+              )}
+              {syncError && (
+                <Typography variant="caption" color="error">
+                  {syncError}
+                </Typography>
+              )}
+            </Stack>
           </Stack>
         </StyledPaper>
 
