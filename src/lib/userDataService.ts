@@ -83,7 +83,7 @@ export async function fetchUserData(params: { mobile: string }): Promise<any> {
   }
   
   // Check if there's already a pending request for this data
-  if (pendingRequests[cacheKey]) {
+  if (cacheKey in pendingRequests) {
     console.log('Using existing request for:', params.mobile);
     return pendingRequests[cacheKey];
   }
@@ -218,7 +218,7 @@ export async function fetchUserDataByType(params: UserDataParams & { dataType: s
   }
   
   // Check if there's already a pending request for this data
-  if (pendingRequests[cacheKey]) {
+  if (cacheKey in pendingRequests) {
     console.log(`Using existing request for ${params.dataType}:`, params.mobile);
     return pendingRequests[cacheKey];
   }
