@@ -209,52 +209,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     fetchAllUserDataFromServer();
   }, [user.id]);
 
-  // Function to load user data from server or fallback to local
-  const loadUserData = async () => {
-    setLoading(true);
-    try {
-      // Fetch transactions
-      const serverTransactions = await fetchUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'transactions',
-      }).catch(() => null);
-      if (serverTransactions) setTransactions(serverTransactions);
-
-      // Fetch monthly budget
-      const serverBudget = await fetchUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'monthlyBudget',
-      }).catch(() => null);
-      if (serverBudget) setMonthlyBudget(serverBudget);
-
-      // Fetch categories
-      const serverCategories = await fetchUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'categories',
-      }).catch(() => null);
-      if (serverCategories) setCategories(serverCategories);
-
-      // Fetch archived month data
-      const serverArchivedMonth = await fetchUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'archivedMonth',
-      }).catch(() => null);
-      if (serverArchivedMonth) setArchivedMonth(serverArchivedMonth);
-
-      setMonthEnded(!!serverArchivedMonth);
-    } catch (error) {
-      console.error('Error loading user data:', error);
-      // Fall back to local storage
-      loadFromLocalStorage();
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Function to load from localStorage
   const loadFromLocalStorage = () => {
     const savedTransactions = localStorage.getItem(`transactions_${user.id}`);
