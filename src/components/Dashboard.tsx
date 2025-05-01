@@ -175,6 +175,29 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     }
   };
 
+  // Fetch all user data types from server and set state
+  const fetchAllUserDataFromServer = async () => {
+    setLoading(true);
+    try {
+      const [serverTransactions, serverBudget, serverCategories, serverArchivedMonth] = await Promise.all([
+        fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'transactions' }).catch(() => null),
+        fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'monthlyBudget' }).catch(() => null),
+        fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'categories' }).catch(() => null),
+        fetchUserDataByType({ mobile: user.id, name: user.name, dataType: 'archivedMonth' }).catch(() => null),
+      ]);
+      if (serverTransactions) setTransactions(serverTransactions);
+      if (serverBudget) setMonthlyBudget(serverBudget);
+      if (serverCategories) setCategories(serverCategories);
+      if (serverArchivedMonth) setArchivedMonth(serverArchivedMonth);
+      setMonthEnded(!!serverArchivedMonth);
+    } catch (error) {
+      console.error('Error fetching all user data from server:', error);
+      loadFromLocalStorage();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -182,8 +205,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const fy = month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
     setCurrentFY(fy);
 
-    // Load data with priority on server data
-    loadUserData();
+    // Always fetch all user data from server after login
+    fetchAllUserDataFromServer();
   }, [user.id]);
 
   // Function to load user data from server or fallback to local
