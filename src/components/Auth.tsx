@@ -97,69 +97,34 @@ export default function Auth({ onLogin }: AuthProps) {
     setLoading(false);
   };
 
-  // Handle login with server-side user data
+  // Handle login with server-side user data ONLY (no localStorage)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setMessage('');
+    setMessage("");
     try {
-      localStorage.setItem('lastLoginPhone', phone); // Save phone for next login
-      
-      // Get all registered users
-      const userData = localStorage.getItem('registeredUsers');
-      const users = userData ? JSON.parse(userData) : {};
-      const user = users[phone];
-      
-      if (user?.password === password) {
-        // After successful local auth, fetch user data from server
-        try {
-          const serverData = await fetchUserData({
-            mobile: phone,
-            name: user.name,
-          });
-          
-          // If server has data, use it instead of local data
-          if (serverData) {
-            if (serverData.mustChangePassword) {
-              setMustChangePassword(true);
-              setPendingUser({ ...serverData, id: phone });
-            } else {
-              onLogin({ ...serverData, id: phone });
-              setMessage('Login successful!');
-            }
-          } else {
-            // First-time login on this device but existing user
-            if (user.mustChangePassword) {
-              setMustChangePassword(true);
-              setPendingUser({ ...user, id: phone });
-            } else {
-              onLogin({ ...user, id: phone });
-              setMessage('Login successful!');
-            }
-            
-            // Save user data to server for future use
-            await saveUserData({
-              mobile: phone,
-              name: user.name,
-              data: { ...user, lastLogin: new Date().toISOString() }
-            });
-          }
-        } catch (serverError) {
-          console.error('Server data error:', serverError);
-          // Fallback to local if server fails
-          if (user.mustChangePassword) {
-            setMustChangePassword(true);
-            setPendingUser({ ...user, id: phone });
-          } else {
-            onLogin({ ...user, id: phone });
-            setMessage('Login successful! (offline mode)');
-          }
+      // Always fetch user from server using mobile number
+      let serverData = null;
+      try {
+        serverData = await fetchUserData({ mobile: phone });
+      } catch (err) {
+        setMessage("Server error. Please try again later.");
+        setLoading(false);
+        return;
+      }
+      if (serverData && serverData.password === password) {
+        if (serverData.mustChangePassword) {
+          setMustChangePassword(true);
+          setPendingUser({ ...serverData, id: phone });
+        } else {
+          onLogin({ ...serverData, id: phone });
+          setMessage("Login successful!");
         }
       } else {
-        setMessage('Invalid phone number or password.');
+        setMessage("Invalid phone number or password.");
       }
     } catch (error: any) {
-      setMessage(error.message || 'Login failed.');
+      setMessage(error.message || "Login failed.");
     }
     setLoading(false);
   };
@@ -259,12 +224,11 @@ export default function Auth({ onLogin }: AuthProps) {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setMessage('');
+    setMessage("");
     try {
       if (otp === serverVerifyCode) {
         const tempData = JSON.parse(localStorage.getItem('tempRegistration') || '{}');
         const existingUsers = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
-        
         // Create user data
         const userData = {
           name: tempData.name,
@@ -272,17 +236,14 @@ export default function Auth({ onLogin }: AuthProps) {
           password: tempData.password,
           registeredAt: new Date().toISOString()
         };
-        
         // Save locally
         existingUsers[tempData.phone] = userData;
         localStorage.setItem('registeredUsers', JSON.stringify(existingUsers));
         localStorage.removeItem('tempRegistration');
-        
-        // Save to server
+        // Save to server (mobile only)
         try {
           await saveUserData({
             mobile: tempData.phone,
-            name: tempData.name,
             data: userData
           });
           setMessage('Registration successful! Please login.');
@@ -290,7 +251,6 @@ export default function Auth({ onLogin }: AuthProps) {
           console.error('Server save error:', serverError);
           setMessage('Registration successful, but cloud sync failed. Please login.');
         }
-        
         setTimeout(() => setMode('login'), 2000);
       } else {
         setMessage('Invalid OTP. Please try again.');
@@ -327,13 +287,11 @@ export default function Auth({ onLogin }: AuthProps) {
         // First fetch any existing server data
         const serverData = await fetchUserData({
           mobile: phone,
-          name: users[phone].name,
         }).catch(() => null);
         
         // Then save updated data
         await saveUserData({
           mobile: phone,
-          name: users[phone].name,
           data: { 
             ...(serverData || users[phone]),
             password: randomPass,
@@ -394,13 +352,11 @@ export default function Auth({ onLogin }: AuthProps) {
         // Get latest server data first
         const serverData = await fetchUserData({
           mobile: pendingUser.id,
-          name: pendingUser.name || users[pendingUser.id].name,
         }).catch(() => null);
         
         // Update with new password
         await saveUserData({
           mobile: pendingUser.id,
-          name: pendingUser.name || users[pendingUser.id].name,
           data: {
             ...(serverData || users[pendingUser.id]),
             password: newUserPassword,

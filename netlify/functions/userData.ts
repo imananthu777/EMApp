@@ -3,12 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
-// Function to get user-specific hash for encryption
-function getUserHash(mobile: string, name: string): string {
-  // Extract numbers only from mobile (without country code)
+// Function to get user-specific hash for encryption (mobile only)
+function getUserHash(mobile: string): string {
   const mobileDigits = mobile.replace(/\D/g, '').slice(-10);
-  // Use a combination of mobile, name, and a fixed salt for key generation
-  const input = `${mobileDigits}${name.toLowerCase().trim()}1994`;
+  const input = `${mobileDigits}1994`;
   return crypto.createHash('sha256').update(input).digest('hex').substring(0, 32);
 }
 
@@ -58,17 +56,17 @@ const handler: Handler = async (event: HandlerEvent) => {
   try {
     // Parse request body
     const body = JSON.parse(event.body || '{}');
-    const { mobile, name, action, data, dataType } = body;
+    const { mobile, action, data, dataType } = body;
 
-    if (!mobile || !name) {
+    if (!mobile) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: 'Mobile number and name are required' })
+        body: JSON.stringify({ error: 'Mobile number is required' })
       };
     }
 
-    // Generate encryption key from user data
-    const userKey = getUserHash(mobile, name);
+    // Generate encryption key from user data (mobile only)
+    const userKey = getUserHash(mobile);
     
     // File path for the user data
     const dataFilePath = path.join(dataDir, 'userdata.json');
@@ -84,21 +82,24 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    if (action === 'save' && data && dataType) {
+    // Handle user registration and login (default dataType to 'user' if not specified for auth operations)
+    const actualDataType = dataType || 'user';
+
+    if (action === 'save') {
       // Encrypt and save user data
       if (!allUserData[mobile]) {
         allUserData[mobile] = {};
       }
-      allUserData[mobile][dataType] = encryptData(data, userKey);
+      allUserData[mobile][actualDataType] = encryptData(data, userKey);
       fs.writeFileSync(dataFilePath, JSON.stringify(allUserData, null, 2));
       
       return {
         statusCode: 200,
         body: JSON.stringify({ success: true, message: 'Data saved successfully' })
       };
-    } else if (action === 'get' && dataType) {
+    } else if (action === 'get') {
       // Retrieve and decrypt user data
-      const encryptedUserData = allUserData[mobile]?.[dataType];
+      const encryptedUserData = allUserData[mobile]?.[actualDataType];
       if (!encryptedUserData) {
         return {
           statusCode: 404,
@@ -121,7 +122,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     } else {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: 'Invalid action or data type' })
+        body: JSON.stringify({ error: 'Invalid action' })
       };
     }
   } catch (error) {

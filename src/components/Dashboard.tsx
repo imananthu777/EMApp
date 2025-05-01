@@ -29,7 +29,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import LockIcon from '@mui/icons-material/Lock';
 import SyncIcon from '@mui/icons-material/Sync';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Chart as ChartJS,
   ArcElement,
@@ -205,9 +205,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const fy = month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
     setCurrentFY(fy);
 
-    // Always fetch all user data from server after login
+    // Only fetch all user data from server once after login
     fetchAllUserDataFromServer();
-  }, [user.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]); // Only run when user changes
 
   // Function to load from localStorage
   const loadFromLocalStorage = () => {
@@ -243,38 +244,50 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setMonthEnded(!!archived);
   };
 
-  // Function to sync local data to server
+  // Function to sync local data to server with debounce
   const syncLocalToServer = async () => {
     try {
       setIsSyncing(true);
 
-      await saveUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'transactions',
-        data: transactions,
-      });
+      // Only save transactions if they exist
+      if (transactions && transactions.length > 0) {
+        await saveUserDataByType({
+          mobile: user.id,
+          name: user.name,
+          dataType: 'transactions',
+          data: transactions,
+        });
+      }
 
-      await saveUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'monthlyBudget',
-        data: monthlyBudget,
-      });
+      // Only save monthly budget if it exists
+      if (monthlyBudget) {
+        await saveUserDataByType({
+          mobile: user.id,
+          name: user.name,
+          dataType: 'monthlyBudget',
+          data: monthlyBudget,
+        });
+      }
 
-      await saveUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'categories',
-        data: categories,
-      });
+      // Only save categories if they exist
+      if (categories && categories.length > 0) {
+        await saveUserDataByType({
+          mobile: user.id,
+          name: user.name,
+          dataType: 'categories',
+          data: categories,
+        });
+      }
 
-      await saveUserDataByType({
-        mobile: user.id,
-        name: user.name,
-        dataType: 'archivedMonth',
-        data: archivedMonth,
-      });
+      // Only save archived month if it exists
+      if (archivedMonth) {
+        await saveUserDataByType({
+          mobile: user.id,
+          name: user.name,
+          dataType: 'archivedMonth',
+          data: archivedMonth,
+        });
+      }
 
     } catch (error) {
       console.error('Error syncing to server:', error);
@@ -283,22 +296,100 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     }
   };
 
-  // Update useEffect to save categories to server
+  // Create a debounced version of syncLocalToServer that waits 2 seconds
+  // This prevents rapid consecutive syncs
+  const debouncedSyncToServer = useCallback(
+    debounce(() => {
+      console.log('Debounced sync triggered');
+      syncLocalToServer();
+    }, 2000),
+    [user.id, transactions, monthlyBudget, categories, archivedMonth]
+  );
+
+  // Store previous values for comparison
+  const prevTransactionsRef = useRef<Transaction[] | null>(null);
+  const prevMonthlyBudgetRef = useRef<MonthlyBudget | null>(null);
+  const prevCategoriesRef = useRef<Category[] | null>(null);
+  const prevArchivedMonthRef = useRef<any | null>(null);
+
+  // Update localStorage and trigger sync only if data actually changed
   useEffect(() => {
+    // Always update localStorage
     localStorage.setItem(`categories_${user.id}`, JSON.stringify(categories));
 
-    // Skip initial load
-    if (!loading) {
-      syncLocalToServer();
-    }
-  }, [categories, user.id]);
+    // Skip during initial load
+    if (loading) return;
 
-  const getFYFromDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
-  };
+    // Check if categories actually changed
+    const prevCategories = prevCategoriesRef.current;
+    if (prevCategories && JSON.stringify(prevCategories) === JSON.stringify(categories)) {
+      // No change, no sync needed
+      return;
+    }
+
+    // Update reference for next comparison
+    prevCategoriesRef.current = [...categories];
+    
+    // Only sync if there's been a meaningful change
+    console.log('Categories changed, triggering debounced sync');
+    debouncedSyncToServer();
+  }, [categories, user.id, loading]);
+
+  // Similar approach for transactions, monthlyBudget, and archivedMonth
+  useEffect(() => {
+    if (loading) return;
+    
+    // Check if transactions actually changed
+    const prevTransactions = prevTransactionsRef.current;
+    if (prevTransactions && JSON.stringify(prevTransactions) === JSON.stringify(transactions)) {
+      return;
+    }
+    
+    prevTransactionsRef.current = [...transactions];
+    console.log('Transactions changed, triggering debounced sync');
+    debouncedSyncToServer();
+  }, [transactions, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    
+    // Check if monthly budget actually changed
+    const prevBudget = prevMonthlyBudgetRef.current;
+    if (prevBudget && JSON.stringify(prevBudget) === JSON.stringify(monthlyBudget)) {
+      return;
+    }
+    
+    prevMonthlyBudgetRef.current = monthlyBudget;
+    console.log('Budget changed, triggering debounced sync');
+    debouncedSyncToServer();
+  }, [monthlyBudget, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    
+    // Check if archived month actually changed
+    const prevArchived = prevArchivedMonthRef.current;
+    if (prevArchived && JSON.stringify(prevArchived) === JSON.stringify(archivedMonth)) {
+      return;
+    }
+    
+    prevArchivedMonthRef.current = archivedMonth;
+    console.log('Archived month changed, triggering debounced sync');
+    debouncedSyncToServer();
+  }, [archivedMonth, loading]);
+
+  // Create debounce utility with proper TypeScript types
+  function debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    return function executedFunction(...args: Parameters<T>): void {
+      const later = () => {
+        timeout = null;
+        func(...args);
+      };
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
 
   // Helper to get days in a month
   const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
@@ -637,6 +728,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setResetType(null);
     setResetError('');
   }
+
+  // Helper function to get financial year from date string
+  const getFYFromDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+  };
 
   return (
     <Box
