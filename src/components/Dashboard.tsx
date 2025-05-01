@@ -469,8 +469,11 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const totalExpenses = calculateTotalExpenses();
   // Calculate total budgeted expenses (sum of all category budgets)
   const totalBudgetedExpenses = monthlyBudget ? Object.values(monthlyBudget.categories || {}).reduce((sum, v) => sum + v, 0) : 0;
-  // Projected balance = total income - total budgeted expenses - total actual incurred expenses
-  const projectedBalance = totalIncome - totalBudgetedExpenses - totalExpenses;
+  // Calculate unbudgeted expenses
+  const budgetedCategories = monthlyBudget ? Object.keys(monthlyBudget.categories || {}) : [];
+  const unbudgetedExpenses = transactions.filter(t => t.type === 'expense' && !budgetedCategories.includes(t.category)).reduce((sum, t) => sum + t.amount, 0);
+  // Projected balance = total income - (total budgeted expenses + unbudgeted expenses)
+  const projectedBalance = totalIncome - (totalBudgetedExpenses + unbudgetedExpenses);
 
   const currentBalance = totalIncome - totalExpenses;
 
