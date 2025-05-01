@@ -1,6 +1,4 @@
 import { Handler, HandlerEvent } from "@netlify/functions";
-import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 
 // Function to get user-specific hash for encryption (mobile only)
@@ -33,22 +31,21 @@ function decryptData(encryptedData: string, key: string): any {
   }
 }
 
-// Ensure the data directory exists
-const dataDir = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+// In-memory cache for development/testing - not persisted between function invocations
+let inMemoryDataStore: Record<string, any> = {};
 
 const handler: Handler = async (event: HandlerEvent) => {
-  // Handle CORS for local development
+  // Handle CORS
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+  };
+  
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-      },
+      headers,
       body: ''
     };
   }
@@ -56,11 +53,12 @@ const handler: Handler = async (event: HandlerEvent) => {
   try {
     // Parse request body
     const body = JSON.parse(event.body || '{}');
-    const { mobile, action, data, dataType } = body;
+    const { mobile, action, data, dataType, name } = body;
 
     if (!mobile) {
       return {
         statusCode: 400,
+        headers,
         body: JSON.stringify({ error: 'Mobile number is required' })
       };
     }
@@ -68,41 +66,51 @@ const handler: Handler = async (event: HandlerEvent) => {
     // Generate encryption key from user data (mobile only)
     const userKey = getUserHash(mobile);
     
-    // File path for the user data
-    const dataFilePath = path.join(dataDir, 'userdata.json');
-    
-    // Initialize or load existing data
-    let allUserData: Record<string, any> = {};
-    if (fs.existsSync(dataFilePath)) {
-      const fileContent = fs.readFileSync(dataFilePath, 'utf8');
-      try {
-        allUserData = JSON.parse(fileContent);
-      } catch (e) {
-        console.error('Error parsing data file:', e);
-      }
-    }
-
     // Handle user registration and login (default dataType to 'user' if not specified for auth operations)
     const actualDataType = dataType || 'user';
+    const userDataKey = `${mobile}:${actualDataType}`;
 
     if (action === 'save') {
-      // Encrypt and save user data
-      if (!allUserData[mobile]) {
-        allUserData[mobile] = {};
+      if (!data) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'No data provided for saving' })
+        };
       }
-      allUserData[mobile][actualDataType] = encryptData(data, userKey);
-      fs.writeFileSync(dataFilePath, JSON.stringify(allUserData, null, 2));
+      
+      // Encrypt user data
+      const encryptedData = encryptData(data, userKey);
+      
+      // Store in memory (for development) - in production this isn't persisted between function calls
+      inMemoryDataStore[userDataKey] = encryptedData;
+      
+      // For production, consider using Netlify's Edge Functions with KV store
+      // or integrate with a database service like Supabase, Firebase, etc.
+      
+      // Log that data was saved (for debugging)
+      console.log(`Data saved for ${mobile}, type: ${actualDataType}`);
       
       return {
         statusCode: 200,
-        body: JSON.stringify({ success: true, message: 'Data saved successfully' })
+        headers,
+        body: JSON.stringify({ 
+          success: true, 
+          message: 'Data saved successfully',
+          details: {
+            user: mobile,
+            dataType: actualDataType,
+            timestamp: new Date().toISOString()
+          }
+        })
       };
     } else if (action === 'get') {
-      // Retrieve and decrypt user data
-      const encryptedUserData = allUserData[mobile]?.[actualDataType];
+      // Retrieve user data
+      const encryptedUserData = inMemoryDataStore[userDataKey];
       if (!encryptedUserData) {
         return {
           statusCode: 404,
+          headers,
           body: JSON.stringify({ error: 'No data found for this user' })
         };
       }
@@ -111,17 +119,20 @@ const handler: Handler = async (event: HandlerEvent) => {
       if (!decryptedData) {
         return {
           statusCode: 500,
+          headers,
           body: JSON.stringify({ error: 'Failed to decrypt data' })
         };
       }
       
       return {
         statusCode: 200,
+        headers,
         body: JSON.stringify(decryptedData)
       };
     } else {
       return {
         statusCode: 400,
+        headers,
         body: JSON.stringify({ error: 'Invalid action' })
       };
     }
@@ -129,7 +140,14 @@ const handler: Handler = async (event: HandlerEvent) => {
     console.error('Function error:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' })
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      },
+      body: JSON.stringify({ 
+        error: 'Internal server error',
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      })
     };
   }
 };
