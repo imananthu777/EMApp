@@ -10,15 +10,11 @@ export default function AdminDashboard() {
   const [adminPassword, setAdminPassword] = useState('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginError, setLoginError] = useState('');
-  const [users, setUsers] = useState<any[]>([]);
   const [resetTokens, setResetTokens] = useState<any>({});
-  const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const allUsers = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
-    setUsers(Object.keys(allUsers).map(id => ({ id, ...allUsers[id] })));
     setResetTokens(JSON.parse(localStorage.getItem('resetTokens') || '{}'));
   }, []);
 

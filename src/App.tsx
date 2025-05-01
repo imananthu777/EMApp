@@ -26,6 +26,11 @@ function App() {
 
   const handleLogin = (userData: any) => {
     setUser(userData)
+    // Show onboarding only for new users after registration
+    if (userData?.id && localStorage.getItem(`showOnboardingForUser_${userData.id}`)) {
+      setShowFirstTimePopup(true)
+      localStorage.removeItem(`showOnboardingForUser_${userData.id}`)
+    }
   }
 
   const handleLogout = () => {

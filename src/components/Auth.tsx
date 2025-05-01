@@ -41,8 +41,6 @@ export default function Auth({ onLogin }: AuthProps) {
   const [otpTimeout, setOtpTimeout] = useState(false);
   const [serverVerifyCode, setServerVerifyCode] = useState('');
   const OTP_TIMEOUT = 300;
-  const [isAdminMode, setIsAdminMode] = useState(false);
-  const [adminError, setAdminError] = useState('');
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserPassword2, setNewUserPassword2] = useState('');
@@ -67,6 +65,14 @@ export default function Auth({ onLogin }: AuthProps) {
     return () => clearInterval(interval);
     // eslint-disable-next-line
   }, [mode, otpSent]);
+
+  // On mount, set default phone for login
+  React.useEffect(() => {
+    if (mode === 'login') {
+      const lastPhone = localStorage.getItem('lastLoginPhone');
+      setPhone(lastPhone || '+91');
+    }
+  }, [mode]);
 
   const formatTimer = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
@@ -93,6 +99,7 @@ export default function Auth({ onLogin }: AuthProps) {
     setLoading(true);
     setMessage('');
     try {
+      localStorage.setItem('lastLoginPhone', phone); // Save phone for next login
       const userData = localStorage.getItem('registeredUsers');
       const users = userData ? JSON.parse(userData) : {};
       const user = users[phone];
@@ -194,7 +201,8 @@ export default function Auth({ onLogin }: AuthProps) {
         password,
         registrationAttemptTime: new Date().toISOString()
       }));
-      
+      // Set onboarding flag for this user
+      localStorage.setItem(`showOnboardingForUser_${phone}`, 'true');
       // Proceed with OTP sending (no longer needs phone passed)
       await handleSendOtp();
     } catch (error: any) {
@@ -230,20 +238,6 @@ export default function Auth({ onLogin }: AuthProps) {
       }
     } catch (error: any) {
       setMessage(error.message || 'Verification failed.');
-    }
-    setLoading(false);
-  };
-
-  // Admin login handler
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setAdminError('');
-    // For demo, hardcode admin credentials
-    if (phone === 'admin' && password === 'admin123') {
-      onLogin({ id: 'admin', isAdmin: true });
-    } else {
-      setAdminError('Invalid admin credentials');
     }
     setLoading(false);
   };

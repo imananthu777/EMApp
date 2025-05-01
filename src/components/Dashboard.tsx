@@ -388,42 +388,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   //   return categories.filter(cat => cat.type === type);
   // };
 
-  const handleDownloadExcel = () => {
-    const [startYear] = currentFY.split('-');
-    const startDate = new Date(Number(startYear), 3, 1);
-
-    const fyTransactions = transactions.filter(t => new Date(t.date) >= startDate);
-
-    const excelData = fyTransactions
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .map(t => ({
-        Date: new Date(t.date).toLocaleDateString('en-IN'),
-        Description: t.description,
-        Category: t.category,
-        Amount: t.type === 'expense' ? -t.amount : t.amount,
-        Type: t.type.charAt(0).toUpperCase() + t.type.slice(1),
-        'Financial Year': t.financialYear || getFYFromDate(t.date)
-      }));
-
-    const ws = XLSX.utils.json_to_sheet(excelData);
-
-    ws['!cols'] = [
-      { wch: 12 },
-      { wch: 30 },
-      { wch: 15 },
-      { wch: 12 },
-      { wch: 15 }
-    ];
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
-
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    
-    saveAs(data, `transactions_FY_${currentFY}.xlsx`);
-  };
-
   // Helper to add closing balance to exported data (with initial balance)
   function addClosingBalance(transactions: Transaction[], initialBalance = 0) {
     let balance = initialBalance;
@@ -505,14 +469,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const totalExpenses = calculateTotalExpenses();
   // Calculate total budgeted expenses (sum of all category budgets)
   const totalBudgetedExpenses = monthlyBudget ? Object.values(monthlyBudget.categories || {}).reduce((sum, v) => sum + v, 0) : 0;
-  // Calculate actual incurred expenses not included in budget
-  const budgetedCategories = monthlyBudget ? Object.keys(monthlyBudget.categories || {}) : [];
-  const unbudgetedExpenses = transactions.filter(t => t.type === 'expense' && !budgetedCategories.includes(t.category)).reduce((sum, t) => sum + t.amount, 0);
   // Projected balance = total income - total budgeted expenses - total actual incurred expenses
   const projectedBalance = totalIncome - totalBudgetedExpenses - totalExpenses;
 
   const currentBalance = totalIncome - totalExpenses;
-  const availableBalance = monthlyBudget ? monthlyBudget.amount - totalExpenses : currentBalance;
 
   // Helper to get user password (from localStorage)
   function getUserPassword() {
