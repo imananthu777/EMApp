@@ -76,3 +76,73 @@ export async function saveUserData(params: UserDataParams): Promise<any> {
     throw error;
   }
 }
+
+/**
+ * Fetches specific user data type from the server
+ * @param params User identity parameters and data type
+ * @returns Promise with user data or null if not found
+ */
+export async function fetchUserDataByType(params: UserDataParams & { dataType: string }): Promise<any> {
+  try {
+    const response = await fetch('/.netlify/functions/userData', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        mobile: params.mobile,
+        name: params.name,
+        action: 'get',
+        dataType: params.dataType
+      })
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      throw new Error(`Server responded with ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching user data by type:', error);
+    throw error;
+  }
+}
+
+/**
+ * Saves specific user data type to the server
+ * @param params User identity, data type, and data parameters
+ * @returns Promise with success status
+ */
+export async function saveUserDataByType(params: UserDataParams & { dataType: string }): Promise<any> {
+  if (!params.data) {
+    throw new Error('No data provided for saving');
+  }
+
+  try {
+    const response = await fetch('/.netlify/functions/userData', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        mobile: params.mobile,
+        name: params.name,
+        action: 'save',
+        dataType: params.dataType,
+        data: params.data
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server responded with ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error saving user data by type:', error);
+    throw error;
+  }
+}

@@ -41,7 +41,7 @@ import {
 } from 'chart.js';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { fetchUserData, saveUserData } from '../lib/userDataService';
+import { fetchUserData, saveUserData, fetchUserDataByType, saveUserDataByType } from '../lib/userDataService';
 
 ChartJS.register(
   ArcElement,
@@ -180,53 +180,52 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const loadUserData = async () => {
     setLoading(true);
     setSyncError(null);
-    
+
     try {
-      // Try to fetch from server first
-      const serverData = await fetchUserData({
+      // Fetch transactions
+      const serverTransactions = await fetchUserDataByType({
         mobile: user.id,
         name: user.name,
+        dataType: 'transactions',
       }).catch(() => null);
-      
-      if (serverData) {
-        // If we have server data, use that
-        if (serverData.transactions) setTransactions(serverData.transactions);
-        if (serverData.monthlyBudget) {
-          setMonthlyBudget(serverData.monthlyBudget);
-          setTempBudget({
-            total: serverData.monthlyBudget.amount || 0,
-            categories: serverData.monthlyBudget.categories || {}
-          });
-        }
-        if (serverData.categories) setCategories(serverData.categories);
-        if (serverData.archivedMonth) setArchivedMonth(serverData.archivedMonth);
-        setMonthEnded(!!serverData.archivedMonth);
-        
-        // Update local storage as backup
-        updateLocalStorage({
-          transactions: serverData.transactions || [],
-          monthlyBudget: serverData.monthlyBudget || null,
-          categories: serverData.categories || defaultCategories,
-          archivedMonth: serverData.archivedMonth || null
-        });
-      } else {
-        // Fall back to local storage
-        loadFromLocalStorage();
-        
-        // Try to sync local data to server
-        syncLocalToServer();
-      }
+      if (serverTransactions) setTransactions(serverTransactions);
+
+      // Fetch monthly budget
+      const serverBudget = await fetchUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'monthlyBudget',
+      }).catch(() => null);
+      if (serverBudget) setMonthlyBudget(serverBudget);
+
+      // Fetch categories
+      const serverCategories = await fetchUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'categories',
+      }).catch(() => null);
+      if (serverCategories) setCategories(serverCategories);
+
+      // Fetch archived month data
+      const serverArchivedMonth = await fetchUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'archivedMonth',
+      }).catch(() => null);
+      if (serverArchivedMonth) setArchivedMonth(serverArchivedMonth);
+
+      setMonthEnded(!!serverArchivedMonth);
     } catch (error) {
-      console.error("Error loading user data:", error);
-      setSyncError("Failed to load data from server. Using local data.");
-      
+      console.error('Error loading user data:', error);
+      setSyncError('Failed to load data from server.');
+
       // Fall back to local storage
       loadFromLocalStorage();
     } finally {
       setLoading(false);
     }
   };
-  
+
   // Function to load from localStorage
   const loadFromLocalStorage = () => {
     const savedTransactions = localStorage.getItem(`transactions_${user.id}`);
@@ -234,7 +233,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const savedCategories = localStorage.getItem(`categories_${user.id}`);
     const archiveKey = `archive_${user.id}_last_month`;
     const archived = localStorage.getItem(archiveKey);
-    
+
     if (savedTransactions) {
       const parsedTransactions = JSON.parse(savedTransactions);
       const updatedTransactions = parsedTransactions.map((t: Transaction) => ({
@@ -243,7 +242,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       }));
       setTransactions(updatedTransactions);
     }
-    
+
     if (savedBudget) {
       const budget = JSON.parse(savedBudget);
       setMonthlyBudget(budget);
@@ -252,53 +251,69 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         categories: budget.categories || {}
       });
     }
-    
+
     if (savedCategories) {
       setCategories(JSON.parse(savedCategories));
     }
-    
+
     setArchivedMonth(archived ? JSON.parse(archived) : null);
     setMonthEnded(!!archived);
   };
-  
-  // Function to sync local data to server
+
+  // Enhance error handling and add retry logic for syncing data to the server
   const syncLocalToServer = async () => {
     try {
       setSyncing(true);
-      
-      const localData = {
-        transactions,
-        monthlyBudget,
-        categories,
-        archivedMonth
-      };
-      
-      await saveUserData({
+      setSyncError(null);
+
+      await saveUserDataByType({
         mobile: user.id,
         name: user.name,
-        data: localData
+        dataType: 'transactions',
+        data: transactions,
       });
-      
+
+      await saveUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'monthlyBudget',
+        data: monthlyBudget,
+      });
+
+      await saveUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'categories',
+        data: categories,
+      });
+
+      await saveUserDataByType({
+        mobile: user.id,
+        name: user.name,
+        dataType: 'archivedMonth',
+        data: archivedMonth,
+      });
+
       setSyncError(null);
     } catch (error) {
-      console.error("Error syncing to server:", error);
-      setSyncError("Failed to sync data to server. Changes may not be available on other devices.");
+      console.error('Error syncing to server:', error);
+      setSyncError('Failed to sync data to server. Changes may not be available on other devices. Please check your connection and try again.');
     } finally {
       setSyncing(false);
     }
   };
-  
+
   // Helper function to update localStorage
   const updateLocalStorage = (data: any) => {
-    if (data.transactions) 
+    if (data.transactions)
       localStorage.setItem(`transactions_${user.id}`, JSON.stringify(data.transactions));
-    
-    if (data.monthlyBudget) 
+
+    if (data.monthlyBudget)
       localStorage.setItem(`budget_${user.id}`, JSON.stringify(data.monthlyBudget));
-    
-    if (data.categories) 
+
+    if (data.categories)
       localStorage.setItem(`categories_${user.id}`, JSON.stringify(data.categories));
-    
+
     if (data.archivedMonth) {
       const archiveKey = `archive_${user.id}_last_month`;
       localStorage.setItem(archiveKey, JSON.stringify(data.archivedMonth));
@@ -308,7 +323,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   // Update useEffect to save categories to server
   useEffect(() => {
     localStorage.setItem(`categories_${user.id}`, JSON.stringify(categories));
-    
+
     // Skip initial load
     if (!loading) {
       syncLocalToServer();
@@ -375,16 +390,16 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       financialYear: getFYFromDate(newTransaction.date)
     };
 
-    const updatedTransactions = selectedTransaction 
+    const updatedTransactions = selectedTransaction
       ? transactions.map(t => t.id === selectedTransaction.id ? transactionToSave : t)
       : [...transactions, transactionToSave];
-    
+
     setTransactions(updatedTransactions);
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
-    
+
     // Sync to server
     syncLocalToServer();
-    
+
     setTransactionDialogOpen(false);
     setSelectedTransaction(null);
     setNewTransaction({ type: 'expense', date: new Date().toISOString().split('T')[0] });
@@ -394,7 +409,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const updatedTransactions = transactions.filter(t => t.id !== id);
     setTransactions(updatedTransactions);
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
-    
+
     // Sync to server
     syncLocalToServer();
   };
@@ -415,10 +430,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     };
     setMonthlyBudget(newBudget);
     localStorage.setItem(`budget_${user.id}`, JSON.stringify(newBudget));
-    
+
     // Sync to server
     syncLocalToServer();
-    
+
     setBudgetDialogOpen(false);
   };
 
@@ -442,12 +457,12 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       endDate: new Date(),
     };
     localStorage.setItem(archiveKey, JSON.stringify(archiveData));
-    
+
     // Append to FY archive
     let fyArchive = JSON.parse(localStorage.getItem(fyKey) || '[]');
     fyArchive.push(archiveData);
     localStorage.setItem(fyKey, JSON.stringify(fyArchive));
-    
+
     // Clear current month
     setTransactions([]);
     setMonthlyBudget(null);
@@ -456,10 +471,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setArchivedMonth(archiveData);
     setMonthEnded(true);
     setLogicalMonthStart(new Date());
-    
+
     // Sync to server
     await syncLocalToServer();
-    
+
     // Disable download current month after ending month
     setTimeout(() => setMonthEnded(false), 0);
   };
@@ -493,14 +508,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     if (!newCategory.name || !newCategory.type || !newCategory.color) return;
 
     if (editingCategory) {
-      setCategories(categories.map(cat => 
+      setCategories(categories.map(cat =>
         cat.name === editingCategory.name ? newCategory as Category : cat
       ));
       setEditingCategory(null);
     } else {
       setCategories([...categories, newCategory as Category]);
     }
-    
+
     setNewCategory({ type: 'expense', color: '#000000' });
     setCategoryDialogOpen(false);
   };
@@ -627,7 +642,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setResetError('Incorrect password.');
       return;
     }
-    
+
     if (resetType === 'month') {
       setTransactions([]);
       setMonthlyBudget(null);
@@ -650,10 +665,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setMonthlyBudget(null);
       setCategories(defaultCategories);
     }
-    
+
     // Sync changes to server
     await syncLocalToServer();
-    
+
     setResetDialogOpen(false);
     setResetPassword('');
     setResetType(null);
@@ -661,21 +676,21 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   }
 
   return (
-    <Box 
-      display="flex" 
-      justifyContent="center" 
-      alignItems="center" 
-      minHeight="100vh" 
-      width="100vw" 
-      sx={{ 
+    <Box
+      display="flex"
+      justifyContent="center"
+      alignItems="center"
+      minHeight="100vh"
+      width="100vw"
+      sx={{
         bgcolor: 'background.default',
         boxSizing: 'border-box',
         overflowX: 'hidden'
       }}
     >
-      <Box 
-        width="100%" 
-        sx={{ 
+      <Box
+        width="100%"
+        sx={{
           mx: 'auto',
           p: { xs: 2, sm: 3, md: 4 },
           boxSizing: 'border-box',
@@ -692,19 +707,19 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         <Fade in timeout={600}>
           <div style={{ width: '100%', boxSizing: 'border-box' }}>
             <StyledPaper>
-              <Stack 
-                direction="row" 
-                justifyContent="space-between" 
-                alignItems="center" 
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
                 spacing={2}
                 sx={{
                   flexWrap: 'nowrap',
                   width: '100%'
                 }}
               >
-                <Stack 
-                  direction="row" 
-                  spacing={{ xs: 1, sm: 2 }} 
+                <Stack
+                  direction="row"
+                  spacing={{ xs: 1, sm: 2 }}
                   alignItems="center"
                   sx={{
                     minWidth: 0,
@@ -716,14 +731,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     }
                   }}
                 >
-                  <AccountCircleIcon 
-                    color="primary" 
-                    sx={{ 
-                      fontSize: { xs: 32, sm: 40 }, 
-                      flexShrink: 0 
-                    }} 
+                  <AccountCircleIcon
+                    color="primary"
+                    sx={{
+                      fontSize: { xs: 32, sm: 40 },
+                      flexShrink: 0
+                    }}
                   />
-                  <Stack sx={{ 
+                  <Stack sx={{
                     minWidth: 0,
                     flexGrow: 1,
                     flexShrink: 1,
@@ -739,11 +754,11 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                         sx={{ height: 20 }}
                       />
                     </Stack>
-                    <Typography 
-                      variant="h6" 
-                      fontWeight={600} 
-                      sx={{ 
-                        fontSize: { xs: 14, sm: 20, md: 22 }, 
+                    <Typography
+                      variant="h6"
+                      fontWeight={600}
+                      sx={{
+                        fontSize: { xs: 14, sm: 20, md: 22 },
                         transition: 'font-size 0.2s',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
@@ -754,19 +769,19 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     </Typography>
                   </Stack>
                 </Stack>
-                <Stack 
-                  direction="row" 
-                  spacing={1} 
-                  alignItems="center" 
-                  sx={{ 
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  sx={{
                     flexShrink: 0,
                     ml: 2
                   }}
                 >
-                  <Typography 
-                    variant="body2" 
+                  <Typography
+                    variant="body2"
                     color="text.secondary"
-                    sx={{ 
+                    sx={{
                       display: { xs: 'none', sm: 'block' },
                       fontSize: '0.875rem',
                       whiteSpace: 'nowrap'
@@ -778,32 +793,72 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     <LogoutIcon />
                   </IconButton>
                 </Stack>
-                <Stack 
-                  direction={{ xs: 'row', sm: 'row' }} 
-                  spacing={{ xs: 3, sm: 4 }} 
-                  alignItems="center" 
-                  justifyContent="flex-end" 
-                  width="100%"
-                  mt={{ xs: 2, sm: 0 }}
-                  sx={{
-                    flexWrap: 'nowrap',
-                    '& > *': {
-                      minWidth: { sm: 'auto' }
-                    }
-                  }}
-                >
-                  {syncing && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <CircularProgress size={16} />
-                      Syncing...
-                    </Typography>
-                  )}
-                  {syncError && (
-                    <Typography variant="caption" color="error">
-                      {syncError}
-                    </Typography>
-                  )}
-                </Stack>
+              </Stack>
+              <Stack
+                direction={{ xs: 'row', sm: 'row' }}
+                spacing={{ xs: 3, sm: 4 }}
+                alignItems="center"
+                justifyContent="flex-end"
+                width="100%"
+                mt={{ xs: 2, sm: 0 }}
+                sx={{
+                  flexWrap: 'nowrap',
+                  '& > *': {
+                    minWidth: { sm: 'auto' }
+                  }
+                }}
+              >
+                {/* Days Left in Month (update to use logical month) */}
+                {(() => {
+                  return (
+                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
+                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
+                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
+                        <CircularProgress variant="determinate" value={daysLeftPercent} size={40} thickness={5} color="primary" sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
+                          <Typography variant="caption" fontWeight={700} color="primary.main" sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{daysLeft}</Typography>
+                        </Box>
+                      </Box>
+                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Days Left</Typography>
+                    </Box>
+                  );
+                })()}
+                {/* Budget Utilized */}
+                {(() => {
+                  const budget = monthlyBudget?.amount || 0;
+                  const spent = calculateTotalExpenses();
+                  const percent = budget ? Math.min((spent / budget) * 100, 100) : 0;
+                  return (
+                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
+                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
+                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
+                        <CircularProgress variant="determinate" value={percent} size={40} thickness={5} color={percent >= 100 ? 'error' : 'success'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
+                          <Typography variant="caption" fontWeight={700} color={percent >= 100 ? 'error.main' : 'success.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Math.round(percent)}%</Typography>
+                        </Box>
+                      </Box>
+                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Budget Used</Typography>
+                    </Box>
+                  );
+                })()}
+                {/* Expenses over Income */}
+                {(() => {
+                  const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+                  const totalExpense = calculateTotalExpenses();
+                  const percent = totalIncome ? Math.min((totalExpense / totalIncome) * 100, 999) : 0;
+                  return (
+                    <Box position="relative" display="inline-flex" flexDirection="column" alignItems="center">
+                      <Box sx={{ width: 40, height: 40, borderRadius: '50%', boxShadow: 3, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'background.paper' }}>
+                        <CircularProgress variant="determinate" value={100} size={40} thickness={5} sx={{ color: '#e0e0e0', position: 'absolute', left: 0, top: 0 }} />
+                        <CircularProgress variant="determinate" value={percent > 100 ? 100 : percent} size={40} thickness={5} color={percent > 100 ? 'error' : 'info'} sx={{ transition: 'all 0.7s cubic-bezier(0.4,0,0.2,1)', position: 'absolute', left: 0, top: 0 }} />
+                        <Box position="absolute" top={0} left={0} width={40} height={40} display="flex" sx={{ alignItems: 'center', justifyContent: 'center' }}>
+                          <Typography variant="caption" fontWeight={700} color={percent > 100 ? 'error.main' : 'info.main'} sx={{ fontSize: { xs: 11, sm: 13 }, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{totalIncome ? Math.round(percent) : 0}%</Typography>
+                        </Box>
+                      </Box>
+                      <Typography variant="caption" display="block" sx={{ fontSize: { xs: 9, sm: 11 } }}>Exp/Inc</Typography>
+                    </Box>
+                  );
+                })()}
               </Stack>
             </StyledPaper>
           </div>
@@ -835,10 +890,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         {monthlyBudget && (
           <StyledPaper sx={{ p: { xs: 2, sm: 4 } }}>
             <Stack spacing={2}>
-              <Stack 
-                direction={{ xs: 'column', sm: 'row' }} 
-                justifyContent="space-between" 
-                alignItems={{ xs: 'flex-start', sm: 'center' }} 
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                justifyContent="space-between"
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
                 spacing={2}
               >
                 <Stack direction="row" alignItems="center" spacing={2}>
@@ -899,11 +954,11 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                   </Button>
                 </Stack>
               </Stack>
-              
-              <List sx={{ 
-                width: '100%', 
-                bgcolor: 'background.paper', 
-                borderRadius: { xs: 1, sm: 2 }, 
+
+              <List sx={{
+                width: '100%',
+                bgcolor: 'background.paper',
+                borderRadius: { xs: 1, sm: 2 },
                 overflow: 'hidden',
                 '& .MuiListItem-root': {
                   flexDirection: { xs: 'column', sm: 'row' },
@@ -919,7 +974,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
               }}>
                 {transactions.length === 0 ? (
                   <ListItem>
-                    <ListItemText 
+                    <ListItemText
                       primary={
                         <Typography variant="body1" textAlign="center">
                           No transactions yet
@@ -945,7 +1000,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                           '&:last-child': {
                             borderBottom: 'none',
                           },
-                          '&:hover': { 
+                          '&:hover': {
                             bgcolor: 'action.hover',
                             cursor: 'pointer'
                           },
@@ -960,18 +1015,18 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                             </Typography>
                           }
                           secondary={
-                            <Stack 
-                              direction={{ xs: 'column', sm: 'row' }} 
-                              spacing={{ xs: 0.5, sm: 1 }} 
+                            <Stack
+                              direction={{ xs: 'column', sm: 'row' }}
+                              spacing={{ xs: 0.5, sm: 1 }}
                               alignItems={{ xs: 'flex-start', sm: 'center' }}
                             >
                               <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
                                 {transaction.category}
                               </Typography>
-                              <Typography 
-                                variant="body2" 
-                                color="text.secondary" 
-                                sx={{ 
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{
                                   display: { xs: 'none', sm: 'block' },
                                   fontSize: { xs: '0.8rem', sm: '0.875rem' }
                                 }}
@@ -992,7 +1047,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                           variant="body2"
                           color={transaction.type === 'income' ? 'success.main' : 'error.main'}
                           className="amount"
-                          sx={{ 
+                          sx={{
                             fontWeight: 600,
                             whiteSpace: 'nowrap',
                             fontSize: { xs: '0.95rem', sm: '1rem' }
@@ -1001,7 +1056,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                           {transaction.type === 'income' ? '+' : '-'}{formatIndianCurrency(transaction.amount)}
                         </Typography>
                       </ListItem>
-                  ))
+                    ))
                 )}
               </List>
             </Stack>
@@ -1069,31 +1124,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                 Warning: You have exceeded your monthly budget by {formatIndianCurrency(calculateTotalExpenses() - monthlyBudget.amount)}!
               </Typography>
             )}
-            <LinearProgress 
-              variant="determinate" 
-              value={daysLeftPercent} 
-              color={daysLeftPercent > 100 ? "error" : "primary"}
-              sx={{ 
-                height: 8, 
-                borderRadius: 4,
-                my: 1,
-                bgcolor: 'background.paper'
-              }} 
-            />
-            {/* Add sync status display */}
-            <Stack direction="row" justifyContent="flex-end" spacing={1}>
-              {syncing && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CircularProgress size={12} />
-                  Syncing...
-                </Typography>
-              )}
-              {syncError && (
-                <Typography variant="caption" color="error">
-                  {syncError}
-                </Typography>
-              )}
-            </Stack>
           </Stack>
         </StyledPaper>
 
@@ -1102,7 +1132,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             <Typography variant="h6" fontWeight={600}>
               Category-wise Budget Usage
             </Typography>
-            
+
             {calculateCategoryExpenses()
               .filter(cat => cat.spent > 0 || cat.budget > 0)
               .map(category => (
@@ -1149,7 +1179,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                     }}
                   />
                 </Box>
-            ))}
+              ))}
           </Stack>
         </StyledPaper>
 
@@ -1238,10 +1268,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                 value={newTransaction.type || 'expense'}
                 onChange={(e) => {
                   const type = e.target.value as 'expense' | 'income';
-                  setNewTransaction({ 
-                    ...newTransaction, 
+                  setNewTransaction({
+                    ...newTransaction,
                     type,
-                    category: '' 
+                    category: ''
                   });
                 }}
                 fullWidth
@@ -1271,7 +1301,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                       <MenuItem key={category.name} value={category.name}>
                         {category.name}
                       </MenuItem>
-                  ))}
+                    ))}
                 </TextField>
                 <Button
                   variant="outlined"
@@ -1417,9 +1447,9 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             ) : (
               <>
                 <Button onClick={() => setCategoryDialogOpen(false)}>Close</Button>
-                <Button 
-                  onClick={handleSaveCategory} 
-                  variant="contained" 
+                <Button
+                  onClick={handleSaveCategory}
+                  variant="contained"
                   color="primary"
                   disabled={!newCategory.name}
                 >
@@ -1529,6 +1559,21 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             <Button onClick={() => setResetDialogOpen(false)}>Cancel</Button>
           </DialogActions>
         </Dialog>
+
+        {/* Add a retry button in the UI to allow users to manually retry syncing */}
+        {syncError && (
+          <Box mt={2}>
+            <Typography color="error">{syncError}</Typography>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={syncLocalToServer}
+              disabled={syncing}
+            >
+              Retry Sync
+            </Button>
+          </Box>
+        )}
       </Box>
     </Box>
   );

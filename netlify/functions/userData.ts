@@ -58,7 +58,7 @@ const handler: Handler = async (event: HandlerEvent) => {
   try {
     // Parse request body
     const body = JSON.parse(event.body || '{}');
-    const { mobile, name, action, data } = body;
+    const { mobile, name, action, data, dataType } = body;
 
     if (!mobile || !name) {
       return {
@@ -74,7 +74,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     const dataFilePath = path.join(dataDir, 'userdata.json');
     
     // Initialize or load existing data
-    let allUserData: Record<string, string> = {};
+    let allUserData: Record<string, any> = {};
     if (fs.existsSync(dataFilePath)) {
       const fileContent = fs.readFileSync(dataFilePath, 'utf8');
       try {
@@ -84,18 +84,21 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    if (action === 'save' && data) {
+    if (action === 'save' && data && dataType) {
       // Encrypt and save user data
-      allUserData[mobile] = encryptData(data, userKey);
+      if (!allUserData[mobile]) {
+        allUserData[mobile] = {};
+      }
+      allUserData[mobile][dataType] = encryptData(data, userKey);
       fs.writeFileSync(dataFilePath, JSON.stringify(allUserData, null, 2));
       
       return {
         statusCode: 200,
         body: JSON.stringify({ success: true, message: 'Data saved successfully' })
       };
-    } else if (action === 'get') {
+    } else if (action === 'get' && dataType) {
       // Retrieve and decrypt user data
-      const encryptedUserData = allUserData[mobile];
+      const encryptedUserData = allUserData[mobile]?.[dataType];
       if (!encryptedUserData) {
         return {
           statusCode: 404,
@@ -118,7 +121,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     } else {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: 'Invalid action' })
+        body: JSON.stringify({ error: 'Invalid action or data type' })
       };
     }
   } catch (error) {
