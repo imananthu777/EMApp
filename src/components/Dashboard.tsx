@@ -41,6 +41,7 @@ import {
 } from 'chart.js';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import { fetchUserData, saveUserData } from '../lib/userDataService';
 
 ChartJS.register(
   ArcElement,
@@ -151,6 +152,12 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
   const [archivedMonth, setArchivedMonth] = useState<any>(null);
   // Add state to track if month has ended
   const [monthEnded, setMonthEnded] = useState(false);
+  // Add state for loading data
+  const [loading, setLoading] = useState(true);
+  // Add state for syncing data
+  const [syncing, setSyncing] = useState(false);
+  // Add state for sync errors
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // State for reset dialog
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
@@ -165,8 +172,69 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const fy = month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
     setCurrentFY(fy);
 
+    // Load data with priority on server data
+    loadUserData();
+  }, [user.id]);
+
+  // Function to load user data from server or fallback to local
+  const loadUserData = async () => {
+    setLoading(true);
+    setSyncError(null);
+    
+    try {
+      // Try to fetch from server first
+      const serverData = await fetchUserData({
+        mobile: user.id,
+        name: user.name,
+      }).catch(() => null);
+      
+      if (serverData) {
+        // If we have server data, use that
+        if (serverData.transactions) setTransactions(serverData.transactions);
+        if (serverData.monthlyBudget) {
+          setMonthlyBudget(serverData.monthlyBudget);
+          setTempBudget({
+            total: serverData.monthlyBudget.amount || 0,
+            categories: serverData.monthlyBudget.categories || {}
+          });
+        }
+        if (serverData.categories) setCategories(serverData.categories);
+        if (serverData.archivedMonth) setArchivedMonth(serverData.archivedMonth);
+        setMonthEnded(!!serverData.archivedMonth);
+        
+        // Update local storage as backup
+        updateLocalStorage({
+          transactions: serverData.transactions || [],
+          monthlyBudget: serverData.monthlyBudget || null,
+          categories: serverData.categories || defaultCategories,
+          archivedMonth: serverData.archivedMonth || null
+        });
+      } else {
+        // Fall back to local storage
+        loadFromLocalStorage();
+        
+        // Try to sync local data to server
+        syncLocalToServer();
+      }
+    } catch (error) {
+      console.error("Error loading user data:", error);
+      setSyncError("Failed to load data from server. Using local data.");
+      
+      // Fall back to local storage
+      loadFromLocalStorage();
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Function to load from localStorage
+  const loadFromLocalStorage = () => {
     const savedTransactions = localStorage.getItem(`transactions_${user.id}`);
     const savedBudget = localStorage.getItem(`budget_${user.id}`);
+    const savedCategories = localStorage.getItem(`categories_${user.id}`);
+    const archiveKey = `archive_${user.id}_last_month`;
+    const archived = localStorage.getItem(archiveKey);
+    
     if (savedTransactions) {
       const parsedTransactions = JSON.parse(savedTransactions);
       const updatedTransactions = parsedTransactions.map((t: Transaction) => ({
@@ -174,8 +242,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         financialYear: t.financialYear || getFYFromDate(t.date)
       }));
       setTransactions(updatedTransactions);
-      localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
     }
+    
     if (savedBudget) {
       const budget = JSON.parse(savedBudget);
       setMonthlyBudget(budget);
@@ -184,15 +252,67 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         categories: budget.categories || {}
       });
     }
-    // Load archived month if exists
-    const archiveKey = `archive_${user.id}_last_month`;
-    const archived = localStorage.getItem(archiveKey);
+    
+    if (savedCategories) {
+      setCategories(JSON.parse(savedCategories));
+    }
+    
     setArchivedMonth(archived ? JSON.parse(archived) : null);
     setMonthEnded(!!archived);
-  }, [user.id]);
+  };
+  
+  // Function to sync local data to server
+  const syncLocalToServer = async () => {
+    try {
+      setSyncing(true);
+      
+      const localData = {
+        transactions,
+        monthlyBudget,
+        categories,
+        archivedMonth
+      };
+      
+      await saveUserData({
+        mobile: user.id,
+        name: user.name,
+        data: localData
+      });
+      
+      setSyncError(null);
+    } catch (error) {
+      console.error("Error syncing to server:", error);
+      setSyncError("Failed to sync data to server. Changes may not be available on other devices.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+  
+  // Helper function to update localStorage
+  const updateLocalStorage = (data: any) => {
+    if (data.transactions) 
+      localStorage.setItem(`transactions_${user.id}`, JSON.stringify(data.transactions));
+    
+    if (data.monthlyBudget) 
+      localStorage.setItem(`budget_${user.id}`, JSON.stringify(data.monthlyBudget));
+    
+    if (data.categories) 
+      localStorage.setItem(`categories_${user.id}`, JSON.stringify(data.categories));
+    
+    if (data.archivedMonth) {
+      const archiveKey = `archive_${user.id}_last_month`;
+      localStorage.setItem(archiveKey, JSON.stringify(data.archivedMonth));
+    }
+  };
 
+  // Update useEffect to save categories to server
   useEffect(() => {
     localStorage.setItem(`categories_${user.id}`, JSON.stringify(categories));
+    
+    // Skip initial load
+    if (!loading) {
+      syncLocalToServer();
+    }
   }, [categories, user.id]);
 
   const getFYFromDate = (dateStr: string) => {
@@ -261,6 +381,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     
     setTransactions(updatedTransactions);
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
+    
+    // Sync to server
+    syncLocalToServer();
+    
     setTransactionDialogOpen(false);
     setSelectedTransaction(null);
     setNewTransaction({ type: 'expense', date: new Date().toISOString().split('T')[0] });
@@ -270,6 +394,9 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     const updatedTransactions = transactions.filter(t => t.id !== id);
     setTransactions(updatedTransactions);
     localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions));
+    
+    // Sync to server
+    syncLocalToServer();
   };
 
   // Commented out unused function
@@ -288,6 +415,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     };
     setMonthlyBudget(newBudget);
     localStorage.setItem(`budget_${user.id}`, JSON.stringify(newBudget));
+    
+    // Sync to server
+    syncLocalToServer();
+    
     setBudgetDialogOpen(false);
   };
 
@@ -299,8 +430,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setBudgetDialogOpen(true);
   };
 
-  // End Current Month handler
-  const handleMonthEnd = () => {
+  // End Current Month handler with server sync
+  const handleMonthEnd = async () => {
     // Archive current month data
     const archiveKey = `archive_${user.id}_last_month`;
     const fyKey = `archive_${user.id}_fy_${currentFY}`;
@@ -311,10 +442,12 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       endDate: new Date(),
     };
     localStorage.setItem(archiveKey, JSON.stringify(archiveData));
+    
     // Append to FY archive
     let fyArchive = JSON.parse(localStorage.getItem(fyKey) || '[]');
     fyArchive.push(archiveData);
     localStorage.setItem(fyKey, JSON.stringify(fyArchive));
+    
     // Clear current month
     setTransactions([]);
     setMonthlyBudget(null);
@@ -323,6 +456,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     setArchivedMonth(archiveData);
     setMonthEnded(true);
     setLogicalMonthStart(new Date());
+    
+    // Sync to server
+    await syncLocalToServer();
+    
     // Disable download current month after ending month
     setTimeout(() => setMonthEnded(false), 0);
   };
@@ -483,13 +620,14 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
     return users[user?.id]?.password || '';
   }
 
-  // Reset handlers
-  function handleResetConfirm() {
+  // Reset handlers with server sync
+  async function handleResetConfirm() {
     setResetError('');
     if (resetPassword !== getUserPassword()) {
       setResetError('Incorrect password.');
       return;
     }
+    
     if (resetType === 'month') {
       setTransactions([]);
       setMonthlyBudget(null);
@@ -512,6 +650,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
       setMonthlyBudget(null);
       setCategories(defaultCategories);
     }
+    
+    // Sync changes to server
+    await syncLocalToServer();
+    
     setResetDialogOpen(false);
     setResetPassword('');
     setResetType(null);

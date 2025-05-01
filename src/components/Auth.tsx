@@ -13,6 +13,7 @@ import {
 import { styled } from '@mui/material/styles';
 import LoginIcon from '@mui/icons-material/Login';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import { fetchUserData, saveUserData } from '../lib/userDataService';
 
 const CenteredPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(4),
@@ -96,22 +97,63 @@ export default function Auth({ onLogin }: AuthProps) {
     setLoading(false);
   };
 
+  // Handle login with server-side user data
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
     try {
       localStorage.setItem('lastLoginPhone', phone); // Save phone for next login
+      
+      // Get all registered users
       const userData = localStorage.getItem('registeredUsers');
       const users = userData ? JSON.parse(userData) : {};
       const user = users[phone];
+      
       if (user?.password === password) {
-        if (user.mustChangePassword) {
-          setMustChangePassword(true);
-          setPendingUser({ ...user, id: phone });
-        } else {
-          onLogin({ ...user, id: phone });
-          setMessage('Login successful!');
+        // After successful local auth, fetch user data from server
+        try {
+          const serverData = await fetchUserData({
+            mobile: phone,
+            name: user.name,
+          });
+          
+          // If server has data, use it instead of local data
+          if (serverData) {
+            if (serverData.mustChangePassword) {
+              setMustChangePassword(true);
+              setPendingUser({ ...serverData, id: phone });
+            } else {
+              onLogin({ ...serverData, id: phone });
+              setMessage('Login successful!');
+            }
+          } else {
+            // First-time login on this device but existing user
+            if (user.mustChangePassword) {
+              setMustChangePassword(true);
+              setPendingUser({ ...user, id: phone });
+            } else {
+              onLogin({ ...user, id: phone });
+              setMessage('Login successful!');
+            }
+            
+            // Save user data to server for future use
+            await saveUserData({
+              mobile: phone,
+              name: user.name,
+              data: { ...user, lastLogin: new Date().toISOString() }
+            });
+          }
+        } catch (serverError) {
+          console.error('Server data error:', serverError);
+          // Fallback to local if server fails
+          if (user.mustChangePassword) {
+            setMustChangePassword(true);
+            setPendingUser({ ...user, id: phone });
+          } else {
+            onLogin({ ...user, id: phone });
+            setMessage('Login successful! (offline mode)');
+          }
         }
       } else {
         setMessage('Invalid phone number or password.');
@@ -213,6 +255,7 @@ export default function Auth({ onLogin }: AuthProps) {
     }
   };
 
+  // Handle registration with server-side data
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -222,18 +265,32 @@ export default function Auth({ onLogin }: AuthProps) {
         const tempData = JSON.parse(localStorage.getItem('tempRegistration') || '{}');
         const existingUsers = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
         
-        // Save the new user
-        existingUsers[tempData.phone] = {
+        // Create user data
+        const userData = {
           name: tempData.name,
           email: tempData.email,
           password: tempData.password,
           registeredAt: new Date().toISOString()
         };
         
+        // Save locally
+        existingUsers[tempData.phone] = userData;
         localStorage.setItem('registeredUsers', JSON.stringify(existingUsers));
         localStorage.removeItem('tempRegistration');
         
-        setMessage('Registration successful! Please login.');
+        // Save to server
+        try {
+          await saveUserData({
+            mobile: tempData.phone,
+            name: tempData.name,
+            data: userData
+          });
+          setMessage('Registration successful! Please login.');
+        } catch (serverError) {
+          console.error('Server save error:', serverError);
+          setMessage('Registration successful, but cloud sync failed. Please login.');
+        }
+        
         setTimeout(() => setMode('login'), 2000);
       } else {
         setMessage('Invalid OTP. Please try again.');
@@ -253,16 +310,45 @@ export default function Auth({ onLogin }: AuthProps) {
       // Generate a random password and set it for the user
       const randomPass = Math.random().toString(36).slice(-8);
       const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+      
       if (!users[phone]) {
         setMessage('No user found with this phone number.');
         setLoading(false);
         return;
       }
+      
+      // Update user data locally
       users[phone].password = randomPass;
       users[phone].mustChangePassword = true;
       localStorage.setItem('registeredUsers', JSON.stringify(users));
-      setResetPasswordForUser(randomPass);
-      setMessage('Your password has been reset. Use the password below to login. You will be asked to change it after login.');
+      
+      // Update on server
+      try {
+        // First fetch any existing server data
+        const serverData = await fetchUserData({
+          mobile: phone,
+          name: users[phone].name,
+        }).catch(() => null);
+        
+        // Then save updated data
+        await saveUserData({
+          mobile: phone,
+          name: users[phone].name,
+          data: { 
+            ...(serverData || users[phone]),
+            password: randomPass,
+            mustChangePassword: true,
+            passwordResetAt: new Date().toISOString()
+          }
+        });
+        
+        setResetPasswordForUser(randomPass);
+        setMessage('Your password has been reset on all devices. Use the password below to login. You will be asked to change it after login.');
+      } catch (serverError) {
+        console.error('Server password reset error:', serverError);
+        setResetPasswordForUser(randomPass);
+        setMessage('Your password has been reset. Use the password below to login. You will be asked to change it after login. (Note: Changes may not sync to other devices)');
+      }
     } catch (error: any) {
       setMessage(error.message || 'Failed to reset password.');
     }
@@ -270,9 +356,10 @@ export default function Auth({ onLogin }: AuthProps) {
   };
 
   // Handle forced password change after admin reset
-  const handleForcePasswordChange = (e: React.FormEvent) => {
+  const handleForcePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setChangePasswordError('');
+    
     if (!newUserPassword || !newUserPassword2) {
       setChangePasswordError('Please enter and confirm your new password.');
       return;
@@ -285,23 +372,58 @@ export default function Auth({ onLogin }: AuthProps) {
       setChangePasswordError('Password must be at least 8 characters long.');
       return;
     }
+    
     // Password strength validation
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
     if (!passwordRegex.test(newUserPassword)) {
       setChangePasswordError('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character');
       return;
     }
-    // Update user password and clear mustChangePassword
-    const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
-    users[pendingUser.id].password = newUserPassword;
-    delete users[pendingUser.id].mustChangePassword;
-    localStorage.setItem('registeredUsers', JSON.stringify(users));
-    setMustChangePassword(false);
-    setPendingUser(null);
-    setNewUserPassword('');
-    setNewUserPassword2('');
-    setChangePasswordError('');
-    onLogin({ ...users[pendingUser.id], id: pendingUser.id });
+    
+    setLoading(true);
+    
+    try {
+      // Update user password and clear mustChangePassword
+      const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+      users[pendingUser.id].password = newUserPassword;
+      delete users[pendingUser.id].mustChangePassword;
+      localStorage.setItem('registeredUsers', JSON.stringify(users));
+      
+      // Update on server
+      try {
+        // Get latest server data first
+        const serverData = await fetchUserData({
+          mobile: pendingUser.id,
+          name: pendingUser.name || users[pendingUser.id].name,
+        }).catch(() => null);
+        
+        // Update with new password
+        await saveUserData({
+          mobile: pendingUser.id,
+          name: pendingUser.name || users[pendingUser.id].name,
+          data: {
+            ...(serverData || users[pendingUser.id]),
+            password: newUserPassword,
+            mustChangePassword: undefined,
+            passwordChangedAt: new Date().toISOString()
+          }
+        });
+      } catch (serverError) {
+        console.error('Server password change error:', serverError);
+        // Continue with local update even if server fails
+      }
+      
+      setMustChangePassword(false);
+      setPendingUser(null);
+      setNewUserPassword('');
+      setNewUserPassword2('');
+      setChangePasswordError('');
+      onLogin({ ...users[pendingUser.id], id: pendingUser.id });
+    } catch (error) {
+      setChangePasswordError('Failed to update password. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (mustChangePassword && pendingUser) {
