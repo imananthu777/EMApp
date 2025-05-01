@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -27,31 +27,108 @@ interface AuthProps {
   onLogin: (userData: any) => void;
 }
 
+// Form validation utility
+const validateForm = (formData: Record<string, string>, formType: string): string | null => {
+  // Basic validation
+  if (formType === 'register') {
+    const { name, phone, email, password, confirmPassword } = formData;
+    
+    if (!name || !phone || !email || !password || !confirmPassword) {
+      return 'Please fill in all fields';
+    }
+
+    // Phone validation
+    if (!phone.startsWith('+')) {
+      return 'Please enter mobile number with country code (e.g. +91)';
+    }
+
+    const phoneRegex = /^\+[1-9]\d{10,14}$/;
+    if (!phoneRegex.test(phone)) {
+      return 'Invalid phone number format. Please enter a valid international number.';
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return 'Please enter a valid email address';
+    }
+
+    // Password validation
+    if (password !== confirmPassword) {
+      return 'Passwords do not match';
+    }
+
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters long';
+    }
+
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(password)) {
+      return 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character';
+    }
+  } else if (formType === 'login') {
+    const { phone, password } = formData;
+    if (!phone || !password) {
+      return 'Please enter both phone and password';
+    }
+  }
+  
+  return null;
+};
+
+// Constants
+const CACHE_EXPIRE_TIME = 1000 * 60 * 30; // 30 minutes
+const OTP_TIMEOUT = 300; // 5 minutes
+
 export default function Auth({ onLogin }: AuthProps) {
   const [mode, setMode] = useState<'greeting' | 'login' | 'register' | 'otp' | 'forgot-password'>('greeting');
   const [loading, setLoading] = useState(false);
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [otp, setOtp] = useState('');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  
+  // Form state - grouped in a single object for easier handling
+  const [formData, setFormData] = useState({
+    phone: '',
+    password: '',
+    confirmPassword: '',
+    otp: '',
+    name: '',
+    email: '',
+    newUserPassword: '',
+    newUserPassword2: '',
+  });
+  
+  // Other state
   const [message, setMessage] = useState('');
   const [timer, setTimer] = useState(0);
   const [otpSent, setOtpSent] = useState(false);
   const [otpTimeout, setOtpTimeout] = useState(false);
   const [serverVerifyCode, setServerVerifyCode] = useState('');
-  const OTP_TIMEOUT = 300;
   const [mustChangePassword, setMustChangePassword] = useState(false);
-  const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserPassword2, setNewUserPassword2] = useState('');
   const [changePasswordError, setChangePasswordError] = useState('');
   const [pendingUser, setPendingUser] = useState<any>(null);
-  // State for showing reset password to user
   const [resetPasswordForUser, setResetPasswordForUser] = useState<string | null>(null);
+  
+  // Memoized cache for user data
+  const [userDataCache, setUserDataCache] = useState<{
+    data: any;
+    timestamp: number;
+    mobile: string;
+  } | null>(null);
 
+  // Handle form input changes with a single handler
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  }, []);
+  
+  // Format timer function
+  const formatTimer = useMemo(() => {
+    return (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+  }, []);
+
+  // OTP timer effect
   React.useEffect(() => {
     let interval: NodeJS.Timeout;
+    
     if (mode === 'otp' && otpSent && !otpTimeout) {
       setTimer(OTP_TIMEOUT);
       interval = setInterval(() => {
@@ -65,25 +142,55 @@ export default function Auth({ onLogin }: AuthProps) {
         });
       }, 1000);
     }
+    
     return () => clearInterval(interval);
-    // eslint-disable-next-line
   }, [mode, otpSent]);
 
-  // On mount, set default phone for login
+  // Load last used phone on mount for login
   React.useEffect(() => {
     if (mode === 'login') {
       const lastPhone = localStorage.getItem('lastLoginPhone');
-      setPhone(lastPhone || '+91');
+      if (lastPhone) {
+        setFormData(prev => ({ ...prev, phone: lastPhone }));
+      }
     }
   }, [mode]);
 
-  const formatTimer = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+  // Optimized server data fetching with caching
+  const fetchUserDataWithCache = useCallback(async (mobile: string) => {
+    // Check if we have valid cached data
+    if (
+      userDataCache && 
+      userDataCache.mobile === mobile && 
+      (Date.now() - userDataCache.timestamp < CACHE_EXPIRE_TIME)
+    ) {
+      console.log("Using cached user data");
+      return userDataCache.data;
+    }
+    
+    console.log("Fetching fresh user data");
+    try {
+      const data = await fetchUserData({ mobile });
+      // Cache the result
+      setUserDataCache({
+        data,
+        timestamp: Date.now(),
+        mobile
+      });
+      return data;
+    } catch (err) {
+      console.error("Error fetching user data:", err);
+      throw err;
+    }
+  }, [userDataCache]);
 
-  // Removed unused targetPhone parameter
-  const handleSendOtp = async () => {
+  // Send OTP - optimized with better error handling
+  const handleSendOtp = useCallback(async () => {
     setLoading(true);
     setMessage('');
+    
     try {
+      // In a real app, this would call a server API
       // Using dummy OTP for testing
       const dummyOtp = "123456";
       setServerVerifyCode(dummyOtp);
@@ -93,142 +200,153 @@ export default function Auth({ onLogin }: AuthProps) {
       setMessage('OTP sent! (For testing, use: 123456)');
     } catch (error: any) {
       setMessage(error.message || 'Network error.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, []);
 
-  // Handle login with server-side user data ONLY (no localStorage)
-  const handleLogin = async (e: React.FormEvent) => {
+  // Optimized login handler with better error handling and caching
+  const handleLogin = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate form
+    const validationError = validateForm(formData, 'login');
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+    
     setLoading(true);
     setMessage("");
+    
     try {
-      // Always fetch user from server using mobile number
+      // Clear any cached data if phone number changed
+      if (userDataCache && userDataCache.mobile !== formData.phone) {
+        setUserDataCache(null);
+      }
+      
+      console.log("Login attempt starting for:", formData.phone);
+      
+      // Fetch user data with caching
       let serverData = null;
       try {
-        serverData = await fetchUserData({ mobile: phone });
-      } catch (err) {
-        setMessage("Server error. Please try again later.");
-        setLoading(false);
-        return;
+        serverData = await fetchUserDataWithCache(formData.phone);
+        console.log("Server response received:", serverData ? "Data found" : "No data");
+      } catch (err: any) {
+        console.error("Server fetch error:", err);
+        setMessage(`Server connection error: ${err.message || "Unknown error"}. Checking local data...`);
+        
+        // Try localStorage as fallback
+        const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+        if (users[formData.phone]) {
+          console.log("User found in localStorage");
+          serverData = users[formData.phone];
+        } else {
+          setMessage("No account found with this phone number. Please register first.");
+          setLoading(false);
+          return;
+        }
       }
-      if (serverData && serverData.password === password) {
+      
+      if (!serverData) {
+        console.log("No user data found, checking localStorage fallback");
+        // Fallback to localStorage if server data not found
+        const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+        if (users[formData.phone]) {
+          console.log("User found in localStorage");
+          serverData = users[formData.phone];
+        } else {
+          console.log("User not found in localStorage either");
+          setMessage("No account found with this phone number. Please register first.");
+          setLoading(false);
+          return;
+        }
+      }
+      
+      if (serverData && serverData.password === formData.password) {
+        // Save the last login phone for convenience
+        localStorage.setItem('lastLoginPhone', formData.phone);
+        
         if (serverData.mustChangePassword) {
           setMustChangePassword(true);
-          setPendingUser({ ...serverData, id: phone });
+          setPendingUser({ ...serverData, id: formData.phone });
         } else {
-          onLogin({ ...serverData, id: phone });
+          onLogin({ ...serverData, id: formData.phone });
           setMessage("Login successful!");
         }
       } else {
         setMessage("Invalid phone number or password.");
       }
     } catch (error: any) {
-      setMessage(error.message || "Login failed.");
+      console.error("Login error:", error);
+      setMessage(`Login error: ${error.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [formData, onLogin, fetchUserDataWithCache, userDataCache]);
 
-  const handleRegister = async (e: React.FormEvent) => {
+  // Optimized register handler
+  const handleRegister = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate form
+    const validationError = validateForm(formData, 'register');
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+    
     setLoading(true);
     setMessage('');
 
     try {
-      // Basic validation
-      if (!name || !phone || !email || !password || !confirmPassword) {
-        setMessage('Please fill in all fields');
-        setLoading(false);
-        return;
-      }
-
-      // Phone number validation
-      if (!phone.startsWith('+')) {
-        setMessage('Please enter mobile number with country code (e.g. +91)');
-        setLoading(false);
-        return;
-      }
-
-      // Check if phone number is valid format
-      const phoneRegex = /^\+[1-9]\d{10,14}$/;
-      if (!phoneRegex.test(phone)) {
-        setMessage('Invalid phone number format. Please enter a valid international number.');
-        setLoading(false);
-        return;
-      }
-
-      // Email validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        setMessage('Please enter a valid email address');
-        setLoading(false);
-        return;
-      }
-
-      // Password validation
-      if (password !== confirmPassword) {
-        setMessage('Passwords do not match');
-        setLoading(false);
-        return;
-      }
-
-      if (password.length < 8) {
-        setMessage('Password must be at least 8 characters long');
-        setLoading(false);
-        return;
-      }
-
-      // Password strength validation
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-      if (!passwordRegex.test(password)) {
-        setMessage('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character');
-        setLoading(false);
-        return;
-      }
-
       // Check if user already exists
       const existingUsers = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
-      if (existingUsers[phone]) {
+      if (existingUsers[formData.phone]) {
         setMessage('This phone number is already registered. Please login or use a different number.');
         setLoading(false);
         return;
       }
 
       // Check if email is already used
-      const isEmailUsed = Object.values(existingUsers).some((user: any) => user.email === email);
+      const isEmailUsed = Object.values(existingUsers).some((user: any) => user.email === formData.email);
       if (isEmailUsed) {
         setMessage('This email is already registered. Please use a different email.');
         setLoading(false);
         return;
       }
 
-      // If all validations pass, store registration data and proceed with OTP
+      // Store registration data
       localStorage.setItem('tempRegistration', JSON.stringify({ 
-        name, 
-        phone, 
-        email, 
-        password,
+        name: formData.name, 
+        phone: formData.phone, 
+        email: formData.email, 
+        password: formData.password,
         registrationAttemptTime: new Date().toISOString()
       }));
-      // Set onboarding flag for this user
-      localStorage.setItem(`showOnboardingForUser_${phone}`, 'true');
-      // Proceed with OTP sending (no longer needs phone passed)
+      
+      // Set onboarding flag
+      localStorage.setItem(`showOnboardingForUser_${formData.phone}`, 'true');
+      
+      // Send OTP
       await handleSendOtp();
     } catch (error: any) {
       setMessage(error.message || 'Registration failed. Please try again.');
       setLoading(false);
     }
-  };
+  }, [formData, handleSendOtp]);
 
-  // Handle registration with server-side data
-  const handleVerifyOtp = async (e: React.FormEvent) => {
+  // Verify OTP handler - optimized with better error handling
+  const handleVerifyOtp = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage("");
+    
     try {
-      if (otp === serverVerifyCode) {
+      if (formData.otp === serverVerifyCode) {
         const tempData = JSON.parse(localStorage.getItem('tempRegistration') || '{}');
         const existingUsers = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
+        
         // Create user data
         const userData = {
           name: tempData.name,
@@ -236,30 +354,64 @@ export default function Auth({ onLogin }: AuthProps) {
           password: tempData.password,
           registeredAt: new Date().toISOString()
         };
-        // Save locally
+        
+        // Save to localStorage
         existingUsers[tempData.phone] = userData;
         localStorage.setItem('registeredUsers', JSON.stringify(existingUsers));
         localStorage.removeItem('tempRegistration');
-        // Save to server (mobile only)
-        try {
-          await saveUserData({
-            mobile: tempData.phone,
-            data: userData
-          });
-          setMessage('Registration successful! Please login.');
-        } catch (serverError) {
-          console.error('Server save error:', serverError);
-          setMessage('Registration successful, but cloud sync failed. Please login.');
+        
+        // Save to server with retry logic
+        let serverSaveSuccess = false;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (!serverSaveSuccess && retryCount < maxRetries) {
+          try {
+            await saveUserData({
+              mobile: tempData.phone,
+              data: userData
+            });
+            serverSaveSuccess = true;
+          } catch (serverError) {
+            console.error(`Server save error (attempt ${retryCount + 1}):`, serverError);
+            retryCount++;
+            
+            if (retryCount >= maxRetries) {
+              setMessage('Registration successful, but cloud sync failed. Please login.');
+              break;
+            }
+            
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
         }
+        
+        if (serverSaveSuccess) {
+          setMessage('Registration successful! Please login.');
+        }
+        
+        // Clear form data
+        setFormData({
+          phone: '',
+          password: '',
+          confirmPassword: '',
+          otp: '',
+          name: '',
+          email: '',
+          newUserPassword: '',
+          newUserPassword2: '',
+        });
+        
         setTimeout(() => setMode('login'), 2000);
       } else {
         setMessage('Invalid OTP. Please try again.');
       }
     } catch (error: any) {
       setMessage(error.message || 'Verification failed.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [formData.otp, serverVerifyCode]);
 
   // Forgot password handler (user)
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -271,29 +423,29 @@ export default function Auth({ onLogin }: AuthProps) {
       const randomPass = Math.random().toString(36).slice(-8);
       const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
       
-      if (!users[phone]) {
+      if (!users[formData.phone]) {
         setMessage('No user found with this phone number.');
         setLoading(false);
         return;
       }
       
       // Update user data locally
-      users[phone].password = randomPass;
-      users[phone].mustChangePassword = true;
+      users[formData.phone].password = randomPass;
+      users[formData.phone].mustChangePassword = true;
       localStorage.setItem('registeredUsers', JSON.stringify(users));
       
       // Update on server
       try {
         // First fetch any existing server data
         const serverData = await fetchUserData({
-          mobile: phone,
+          mobile: formData.phone,
         }).catch(() => null);
         
         // Then save updated data
         await saveUserData({
-          mobile: phone,
+          mobile: formData.phone,
           data: { 
-            ...(serverData || users[phone]),
+            ...(serverData || users[formData.phone]),
             password: randomPass,
             mustChangePassword: true,
             passwordResetAt: new Date().toISOString()
@@ -318,22 +470,22 @@ export default function Auth({ onLogin }: AuthProps) {
     e.preventDefault();
     setChangePasswordError('');
     
-    if (!newUserPassword || !newUserPassword2) {
+    if (!formData.newUserPassword || !formData.newUserPassword2) {
       setChangePasswordError('Please enter and confirm your new password.');
       return;
     }
-    if (newUserPassword !== newUserPassword2) {
+    if (formData.newUserPassword !== formData.newUserPassword2) {
       setChangePasswordError('Passwords do not match.');
       return;
     }
-    if (newUserPassword.length < 8) {
+    if (formData.newUserPassword.length < 8) {
       setChangePasswordError('Password must be at least 8 characters long.');
       return;
     }
     
     // Password strength validation
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-    if (!passwordRegex.test(newUserPassword)) {
+    if (!passwordRegex.test(formData.newUserPassword)) {
       setChangePasswordError('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character');
       return;
     }
@@ -343,7 +495,7 @@ export default function Auth({ onLogin }: AuthProps) {
     try {
       // Update user password and clear mustChangePassword
       const users = JSON.parse(localStorage.getItem('registeredUsers') || '{}');
-      users[pendingUser.id].password = newUserPassword;
+      users[pendingUser.id].password = formData.newUserPassword;
       delete users[pendingUser.id].mustChangePassword;
       localStorage.setItem('registeredUsers', JSON.stringify(users));
       
@@ -359,7 +511,7 @@ export default function Auth({ onLogin }: AuthProps) {
           mobile: pendingUser.id,
           data: {
             ...(serverData || users[pendingUser.id]),
-            password: newUserPassword,
+            password: formData.newUserPassword,
             mustChangePassword: undefined,
             passwordChangedAt: new Date().toISOString()
           }
@@ -371,8 +523,11 @@ export default function Auth({ onLogin }: AuthProps) {
       
       setMustChangePassword(false);
       setPendingUser(null);
-      setNewUserPassword('');
-      setNewUserPassword2('');
+      setFormData(prev => ({
+        ...prev,
+        newUserPassword: '',
+        newUserPassword2: '',
+      }));
       setChangePasswordError('');
       onLogin({ ...users[pendingUser.id], id: pendingUser.id });
     } catch (error) {
@@ -394,16 +549,18 @@ export default function Auth({ onLogin }: AuthProps) {
               <TextField
                 label="New Password"
                 type="password"
-                value={newUserPassword}
-                onChange={e => setNewUserPassword(e.target.value)}
+                name="newUserPassword"
+                value={formData.newUserPassword}
+                onChange={handleInputChange}
                 fullWidth
                 required
               />
               <TextField
                 label="Confirm New Password"
                 type="password"
-                value={newUserPassword2}
-                onChange={e => setNewUserPassword2(e.target.value)}
+                name="newUserPassword2"
+                value={formData.newUserPassword2}
+                onChange={handleInputChange}
                 fullWidth
                 required
               />
@@ -475,8 +632,9 @@ export default function Auth({ onLogin }: AuthProps) {
                 <TextField
                   label="Mobile Number"
                   type="tel"
-                  value={phone}
-                  onChange={e => setPhone(e.target.value)}
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                   inputProps={{ maxLength: 15 }}
@@ -485,8 +643,9 @@ export default function Auth({ onLogin }: AuthProps) {
                 <TextField
                   label="Password"
                   type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                 />
@@ -544,8 +703,9 @@ export default function Auth({ onLogin }: AuthProps) {
                 </Typography>
                 <TextField
                   label="Name"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                   autoFocus
@@ -553,8 +713,9 @@ export default function Auth({ onLogin }: AuthProps) {
                 <TextField
                   label="Mobile Number"
                   type="tel"
-                  value={phone}
-                  onChange={e => setPhone(e.target.value)}
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                   inputProps={{ maxLength: 15 }}
@@ -562,24 +723,27 @@ export default function Auth({ onLogin }: AuthProps) {
                 <TextField
                   label="Email"
                   type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                 />
                 <TextField
                   label="Password"
                   type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                 />
                 <TextField
                   label="Confirm Password"
                   type="password"
-                  value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
+                  name="confirmPassword"
+                  value={formData.confirmPassword}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                 />
@@ -628,8 +792,9 @@ export default function Auth({ onLogin }: AuthProps) {
                 </Typography>
                 <TextField
                   label="6-digit OTP"
-                  value={otp}
-                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  name="otp"
+                  value={formData.otp}
+                  onChange={handleInputChange}
                   fullWidth
                   required
                   inputProps={{ maxLength: 6, inputMode: 'numeric', pattern: '[0-9]*' }}
@@ -637,7 +802,7 @@ export default function Auth({ onLogin }: AuthProps) {
                   disabled={otpTimeout}
                 />
                 <Typography variant="body2" color="text.secondary">
-                  Sent to: <b>{phone}</b>
+                  Sent to: <b>{formData.phone}</b>
                 </Typography>
                 <Typography variant="caption" color={otpTimeout ? 'error' : 'primary'}>
                   {otpTimeout ? 'OTP expired. Please resend.' : `Expires in: ${formatTimer(timer)}`}
@@ -647,7 +812,7 @@ export default function Auth({ onLogin }: AuthProps) {
                   variant="contained"
                   color="primary"
                   fullWidth
-                  disabled={loading || otpTimeout || otp.length !== 6}
+                  disabled={loading || otpTimeout || formData.otp.length !== 6}
                   sx={{ borderRadius: 3, fontWeight: 600 }}
                   endIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
                 >
@@ -657,7 +822,7 @@ export default function Auth({ onLogin }: AuthProps) {
                   variant="outlined"
                   color="primary"
                   fullWidth
-                  onClick={() => handleSendOtp()} // Call without phone
+                  onClick={handleSendOtp}
                   disabled={loading || !otpTimeout}
                   sx={{ borderRadius: 3 }}
                 >
@@ -697,8 +862,9 @@ export default function Auth({ onLogin }: AuthProps) {
               <TextField
                 label="Mobile Number"
                 type="tel"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
+                name="phone"
+                value={formData.phone}
+                onChange={handleInputChange}
                 fullWidth
                 required
                 inputProps={{ maxLength: 15 }}

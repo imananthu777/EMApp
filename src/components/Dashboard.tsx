@@ -194,8 +194,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
 
       if (serverTransactions) {
         // Compare with current transactions - implement deep comparison 
-        const currentJSON = JSON.stringify(transactions.sort((a, b) => a.id.localeCompare(b.id)));
-        const serverJSON = JSON.stringify(serverTransactions.sort((a, b) => a.id.localeCompare(b.id)));
+        const currentJSON = JSON.stringify(transactions.sort((a: Transaction, b: Transaction) => a.id.localeCompare(b.id)));
+        const serverJSON = JSON.stringify(serverTransactions.sort((a: Transaction, b: Transaction) => a.id.localeCompare(b.id)));
         
         if (currentJSON !== serverJSON) {
           console.log('Server transactions differ from local - updating local');
@@ -220,8 +220,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
 
       if (serverCategories) {
         // Compare with current categories
-        const currentJSON = JSON.stringify(categories.sort((a, b) => a.name.localeCompare(b.name)));
-        const serverJSON = JSON.stringify(serverCategories.sort((a, b) => a.name.localeCompare(b.name)));
+        const currentJSON = JSON.stringify(categories.sort((a: Category, b: Category) => a.name.localeCompare(b.name)));
+        const serverJSON = JSON.stringify(serverCategories.sort((a: Category, b: Category) => a.name.localeCompare(b.name)));
         
         if (currentJSON !== serverJSON) {
           console.log('Server categories differ from local - updating local');
