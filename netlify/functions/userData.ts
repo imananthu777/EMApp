@@ -1,7 +1,6 @@
 import { Handler, HandlerEvent, HandlerContext } from "@netlify/functions";
 import * as crypto from 'crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { getStore } from "@netlify/blobs";
 
 // Secret salt for additional security - in production, use environment variables
 const HASH_SALT = process.env.HASH_SALT || 'em-app-secure-salt-1994';
@@ -59,50 +58,33 @@ function decryptData(encryptedData: string, key: string): any {
 // In-memory cache for development/testing
 let inMemoryDataStore: Record<string, any> = {};
 
-// Persistent storage helper functions 
-function getDataDirPath(): string {
-  // In Netlify Functions, /tmp is writable
-  return process.env.NODE_ENV === 'development' 
-    ? join(__dirname, '..', '..', 'netlify', 'data')
-    : '/tmp/emapp-data';
-}
-
-function ensureDataDirExists(): void {
-  const dataDir = getDataDirPath();
-  if (!existsSync(dataDir)) {
-    try {
-      mkdirSync(dataDir, { recursive: true });
-    } catch (error) {
-      console.error('Failed to create data directory:', error);
-    }
-  }
-}
-
-function getDataFilePath(key: string): string {
-  return join(getDataDirPath(), `${key.replace(/:/g, '-')}.json`);
-}
-
-function saveDataToFile(key: string, data: string): boolean {
+// Netlify Blob Storage helper functions
+async function saveToBlobStore(key: string, data: string): Promise<boolean> {
   try {
-    ensureDataDirExists();
-    const filePath = getDataFilePath(key);
-    writeFileSync(filePath, data);
+    const store = getStore({
+      name: "emapp-user-data",
+      siteID: process.env.SITE_ID || "local-dev-site"
+    });
+    
+    await store.set(key, data);
     return true;
   } catch (error) {
-    console.error('Error writing data to file:', error);
+    console.error('Error saving data to Blob Store:', error);
     return false;
   }
 }
 
-function loadDataFromFile(key: string): string | null {
+async function loadFromBlobStore(key: string): Promise<string | null> {
   try {
-    const filePath = getDataFilePath(key);
-    if (existsSync(filePath)) {
-      return readFileSync(filePath, 'utf8');
-    }
-    return null;
+    const store = getStore({
+      name: "emapp-user-data",
+      siteID: process.env.SITE_ID || "local-dev-site"
+    });
+    
+    const data = await store.get(key);
+    return data ? data.toString() : null;
   } catch (error) {
-    console.error('Error reading data from file:', error);
+    console.error('Error reading data from Blob Store:', error);
     return null;
   }
 }
@@ -197,11 +179,11 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
       // Encrypt user data
       const encryptedData = encryptData(data, userKey);
       
-      // Store in memory
+      // Store in memory for fast access
       inMemoryDataStore[userDataKey] = encryptedData;
       
-      // Also persist to file for development and Netlify Functions
-      saveDataToFile(userDataKey, encryptedData);
+      // Persist to Netlify Blob Storage for durability
+      await saveToBlobStore(userDataKey, encryptedData);
       
       // Invalidate cache
       delete dataCache[`${userDataKey}:get`];
@@ -211,7 +193,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
         headers,
         body: JSON.stringify({ 
           success: true, 
-          message: 'Data saved successfully',
+          message: 'Data saved successfully to Netlify Blob Storage',
           details: {
             user: mobile,
             dataType: actualDataType,
@@ -234,12 +216,12 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
         };
       }
       
-      // Retrieve user data (first from memory, then from file)
+      // Retrieve user data (first from memory, then from Blob Store)
       let encryptedUserData = inMemoryDataStore[userDataKey];
       
       if (!encryptedUserData) {
-        // Try loading from file
-        encryptedUserData = loadDataFromFile(userDataKey);
+        // Try loading from Blob Storage
+        encryptedUserData = await loadFromBlobStore(userDataKey);
         
         if (encryptedUserData) {
           // Update memory store

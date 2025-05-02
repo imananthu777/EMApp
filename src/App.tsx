@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react'
 import Auth from './components/Auth'
 import Dashboard from './components/Dashboard'
 import FirstTimePopup from './components/FirstTimePopup'
+import DataMigrationPopup from './components/DataMigrationPopup'
 import AdminDashboard from './components/AdminDashboard'
 import './App.css'
 
 function App() {
   const [user, setUser] = useState<any>(null)
   const [showFirstTimePopup, setShowFirstTimePopup] = useState(false)
+  const [showMigrationPopup, setShowMigrationPopup] = useState(false)
   const location = window.location.pathname
 
   useEffect(() => {
@@ -40,6 +42,16 @@ function App() {
     };
   }, []);
 
+  // Check if data migration is needed when user logs in
+  useEffect(() => {
+    if (user) {
+      const migrationComplete = localStorage.getItem(`migration_complete_${user.id}`);
+      if (!migrationComplete) {
+        setShowMigrationPopup(true);
+      }
+    }
+  }, [user]);
+
   const handleLogin = (userData: any) => {
     setUser(userData);
     // Store user in localStorage
@@ -69,6 +81,11 @@ function App() {
       )}
       {!user ? (
         <Auth onLogin={handleLogin} />
+      ) : showMigrationPopup ? (
+        <DataMigrationPopup 
+          user={user}
+          onComplete={() => setShowMigrationPopup(false)}
+        />
       ) : (
         <Dashboard user={user} onLogout={handleLogout} />
       )}

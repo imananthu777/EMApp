@@ -12,3 +12,11 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Enable Blob Storage for the application
+[blobs]
+  signing_key = "${NETLIFY_BLOB_KEY}" # This will be auto-filled by Netlify
+
+[functions.userData]
+  included_files = []
+  external_node_modules = ["@netlify/blobs"]
