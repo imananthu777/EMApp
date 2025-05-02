@@ -584,6 +584,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
 
   // End Current Month handler with server sync
   const handleMonthEnd = async () => {
+    if (!confirm('Are you sure you want to end the current month?\nThis will archive current month data and start fresh for the new month.')) {
+      return;
+    }
+
     // Archive current month data
     const archiveKey = `archive_${user.id}_last_month`;
     const fyKey = `archive_${user.id}_fy_${currentFY}`;
@@ -611,9 +615,6 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
 
     // Sync to server
     await syncLocalToServer();
-
-    // Disable download current month after ending month
-    setTimeout(() => setMonthEnded(false), 0);
   };
 
   const calculateTotalExpenses = () => {
